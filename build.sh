@@ -2,7 +2,7 @@
 
 TARGET=aarch64-none-elf-
 
-rm kernel8.*
+rm kernel8.dump kernel8.elf sdfat/kernel8.img
 
 OPTIMISATION="-Os"
 
@@ -19,6 +19,6 @@ KERNEL_ELEMENTS="boot.c el3.c memset.c"
 
 ${TARGET}gcc -o kernel8.elf $KERNEL_ELEMENTS $CFLAGS -DCORE_SIZE=\"$CORE_SIZE\" &&
 
-${TARGET}objcopy kernel8.elf kernel8.img -O binary &&
-${TARGET}objdump -x --source --disassemble-all kernel8.elf > kernel8.dump &&
+${TARGET}objcopy kernel8.elf sdfat/kernel8.img -O binary &&
+${TARGET}objdump -x --source --disassemble-all sdfat/kernel8.elf > kernel8.dump &&
 grep -vl \\.bss kernel8.dump || ( echo Uninitialised variables expand the kernel image unnecessarily && false )
