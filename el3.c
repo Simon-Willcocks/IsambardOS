@@ -18,11 +18,24 @@ static inline int read_number_of_cores()
   return ((res >> 24) & 0x3) +1;
 }
 
+static void set_secure_aarch64()
+{
+  // Sets bits:
+  //   11: ST Do not trap EL1 accesses of CNTPS_* to EL3
+  //   10: RW Lower levels Aarch64
+  //    9: SIF Secure Instruction Fetch (only from secure memory)
+  //    7: SMD Secure Monitor Call disable
+  //    5,4: res1
+  asm volatile ( "\tmsr scr_el3, %[bits]" : : [bits] "r" (0b00000000111010110000) );
+}
 
 typedef void __attribute__(( noreturn )) (*secure_el1_code)( Core *core, int number, uint64_t volatile *present );
 
 static void __attribute__(( noreturn )) run_at_secure_el1( Core *core, int number, uint64_t volatile *present, secure_el1_code code )
 {
+  core->runnable = 0;
+  core->core = 0;
+
   asm volatile ( "\tmsr sp_el1, %[SP]"
                "\n\tmov sp, %[SP]"
                "\n\tmsr spsr_el3, %[PSR]"
@@ -32,7 +45,7 @@ static void __attribute__(( noreturn )) run_at_secure_el1( Core *core, int numbe
                "\n\tmov x2, %[PRESENT]"
                "\n\teret"
                :
-               : [SP] "r" (core+1)
+               : [SP] "r" (&core->core) // So core and runnable aren't overwritten as stack
                , [EL1] "r" (code)
                , [CORE] "r" (core)
                , [NUMBER] "r" (number)
@@ -47,11 +60,18 @@ extern void __attribute__(( noreturn )) enter_secure_el1( Core *phys_core, int n
 
 void __attribute__(( noreturn, noinline )) c_el3_nommu( Core *core, int number )
 {
+  if (sizeof( uint32_t ) != 4 || sizeof( uint64_t ) != 8) {
+    asm volatile ( "wfi" );
+    __builtin_unreachable();
+  }
+
   if (number == 0) {
     // Only one core should do this, and there is always a core 0.
     number_of_cores = read_number_of_cores();
-    first_free_page = (integer_register) (first_free_page + number_of_cores * sizeof( Core ));
+    first_free_page = (integer_register) (core + number_of_cores);
   }
+
+  set_secure_aarch64();
 
   // Note that this memset will fill the whole stack with zeros, but this routine does
   // not return, so there should be no bad effects.
