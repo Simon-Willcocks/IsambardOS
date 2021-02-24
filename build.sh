@@ -1,5 +1,19 @@
 #! /bin/bash -
 
+if [ ! -e tools/interfaces -o tools/interfaces.c -nt tools/interfaces ] ; then
+  gcc tools/interfaces.c -o tools/interfaces
+fi
+
+(
+  cd interfaces
+  for i in *
+  do
+    ../tools/client $i > ../include/interfaces/client/$i.h
+    ../tools/server $i > ../include/interfaces/provider/$i.h
+  done
+  cd ..
+)
+
 TARGET=aarch64-none-elf-
 
 rm kernel8.dump kernel8.elf sdfat/kernel8.img
@@ -29,12 +43,85 @@ echo Core size $CORE_SIZE
 # -mgeneral-regs-only Stops the compiler using floating point registers as temprary storage
 # -ffixed-x18 stops the compiler from using x18, so that it can be used to store the current thread (not trusted by the kernel, of course)
 # I anticipate code with lots of fast locks, so a register is probably a better choice than TLS. ICBW.
-CFLAGS="-I include -mgeneral-regs-only $OPTIMISATION -g -Wall -Wextra -fno-zero-initialized-in-bss -nostartfiles -nostdlib -T ld.script -mtune=cortex-a53 -DCORE_STACK_SIZE=$STACK_SIZE -ffixed-x18 "
+CFLAGS="-I include -mgeneral-regs-only $OPTIMISATION -g -Wall -Wextra -fno-zero-initialized-in-bss -nostartfiles -nostdlib -mtune=cortex-a53 -DCORE_STACK_SIZE=$STACK_SIZE -ffixed-x18 "
 
-KERNEL_ELEMENTS="boot.c el3.c memset.c"
+KERNEL_ELEMENTS="boot.c el3.c el3_gpio4_debug.c secure_el1.c kernel_translation_tables.c memset.c"
 
-${TARGET}gcc -o kernel8.elf $KERNEL_ELEMENTS $CFLAGS -DCORE_SIZE=\"$CORE_SIZE\" &&
+SYSTEM_DRIVER=system
+MEMORY_DRIVER=physical_memory_allocator
+SPECIAL_DRIVERS="$SYSTEM_DRIVER $MEMORY_DRIVER"
+
+DRIVERS="pi3gpu show_page"
+
+echo Building drivers: $DRIVERS
+
+count() { echo -n $#; }
+
+symbol() {
+  ${TARGET}objdump -t $1 | sed -n 's/^\([0-9a-f]*\).*\<'$2'\>/0x\1/p'
+}
+
+build_driver() {
+  # Each driver's code and data will be padded to a 4k boundary, the .bin file will be a multiple of 4k in size.
+  # Parameters: ld.script for build (used to locate code other than at 0), driver name, symbols to keep
+  if [ -d drivers/"$2" ] ; then
+    ${TARGET}gcc -g -DCORE_STACK_SIZE=$STACK_SIZE -I drivers/"$2" drivers/"$2"/*.c -o built_drivers/"$2".elf -T $1 $CFLAGS
+  else
+    ${TARGET}gcc -g -DCORE_STACK_SIZE=$STACK_SIZE drivers/"$2".c -o built_drivers/"$2".elf -T $1 $CFLAGS
+  fi &&
+  # elf object file to binary, runnable code and data
+  ${TARGET}objcopy -O binary built_drivers/"$2".elf built_drivers/"$2".bin --gap-fill 42 --pad-to $(( $( symbol built_drivers/"$2".elf pad_to_here ) )) &&
+  # Binary file to object file that can be linked into kernel
+  ${TARGET}objcopy -I binary -O elf64-littleaarch64 -B aarch64 built_drivers/"$2".bin built_drivers/"$2".o --rename-section .data=.data_driver,alloc,load,readonly,data,contents \
+    --add-symbol '_binary_built_drivers_'$2'_data_pages='$(( $( symbol built_drivers/"$2".elf data_pages ) )) \
+    --add-symbol '_binary_built_drivers_'$2'_code_pages='$(( $( symbol built_drivers/"$2".elf code_pages ) )) &&
+  ${TARGET}objdump -x --source --disassemble built_drivers/"$2".elf > built_drivers/"$2".dump
+}
+
+build_driver system_driver.ld.script "$SYSTEM_DRIVER"
+
+build_driver memory_driver.ld.script "$MEMORY_DRIVER"
+
+for driver in $DRIVERS
+do
+  build_driver driver.ld.script "$driver" || break
+done
+
+(
+echo '// Automatically generated file, do not check in to git.'
+echo '#include "types.h"'
+echo
+for driver in $SYSTEM_DRIVER $MEMORY_DRIVER $DRIVERS
+do
+  echo 'extern uint8_t _binary_built_drivers_'$driver'_bin_start;'
+  echo 'extern uint8_t _binary_built_drivers_'$driver'_bin_end;'
+  echo 'extern uint8_t _binary_built_drivers_'$driver'_code_pages;'
+  echo 'extern uint8_t _binary_built_drivers_'$driver'_data_pages;'
+done
+echo
+echo 'struct {'
+echo '  integer_register start;'
+echo '  integer_register end;'
+echo '  integer_register code_pages;'
+echo '  integer_register data_pages;'
+echo '} drivers[] = {'
+for driver in $SYSTEM_DRIVER $MEMORY_DRIVER $DRIVERS
+do
+  if [ $driver != $SYSTEM_DRIVER ]; then echo "  ," ; fi
+  echo '  {'
+  echo '    .start = &_binary_built_drivers_'$driver'_bin_start - (uint8_t*) 0,'
+  echo '    .end = &_binary_built_drivers_'$driver'_bin_end - (uint8_t*) 0,'
+  echo '    .code_pages = &_binary_built_drivers_'$driver'_code_pages - (uint8_t*) 0,'
+  echo '    .data_pages = &_binary_built_drivers_'$driver'_data_pages - (uint8_t*) 0'
+  echo '  }'
+done
+echo '};'
+) > built_drivers/drivers_info.h
+
+${TARGET}gcc -o kernel8.elf -T ld.script -I built_drivers/ $KERNEL_ELEMENTS built_drivers/*.o $CFLAGS -DCORE_SIZE=\"$CORE_SIZE\" &&
 
 ${TARGET}objcopy kernel8.elf sdfat/kernel8.img -O binary &&
-${TARGET}objdump -x --source --disassemble kernel8.elf > kernel8.dump &&
-grep -vl \\.bss kernel8.dump || ( echo Uninitialised variables expand the kernel image unnecessarily && false )
+${TARGET}objdump -x --source --disassemble-all kernel8.elf > kernel8.dump &&
+( grep -vl \\.bss kernel8.dump || ( echo Uninitialised variables expand the kernel image unnecessarily && false ) ) &&
+( if grep ' _binary_built_.*bin_' kernel8.dump | grep -e "[1-9a-f][0-9a-f][0-9a-f] g" -e "[0-9a-f][1-9a-f][0-9a-f] g" -e "[0-9a-f][0-9a-f][1-9a-f] g"  ; then echo Build failure, drivers not aligned properly ; false ; else true; fi )
+

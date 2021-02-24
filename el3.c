@@ -1,5 +1,7 @@
 /* Copyright (c) 2020 Simon Willcocks */
 
+// This file is the entry point for EL3, it performs initialisation, then drops to Secure EL1
+
 // memset, the only C library function used in the kernel (mostly because the optimiser uses it).
 void *memset(void *s, int c, unsigned long long n);
 
@@ -18,16 +20,7 @@ static inline int read_number_of_cores()
   return ((res >> 24) & 0x3) +1;
 }
 
-static void set_secure_aarch64()
-{
-  // Sets bits:
-  //   11: ST Do not trap EL1 accesses of CNTPS_* to EL3
-  //   10: RW Lower levels Aarch64
-  //    9: SIF Secure Instruction Fetch (only from secure memory)
-  //    7: SMD Secure Monitor Call disable
-  //    5,4: res1
-  asm volatile ( "\tmsr scr_el3, %[bits]" : : [bits] "r" (0b00000000111010110000) );
-}
+extern void setup_el3_for_reentry( int number );
 
 typedef void __attribute__(( noreturn )) (*secure_el1_code)( Core *core, int number, uint64_t volatile *present );
 
@@ -60,6 +53,8 @@ extern void __attribute__(( noreturn )) enter_secure_el1( Core *phys_core, int n
 
 void __attribute__(( noreturn, noinline )) c_el3_nommu( Core *core, int number )
 {
+  // Running at EL3, without memory management, which means load/store exclusive is inactive, I think...
+
   if (sizeof( uint32_t ) != 4 || sizeof( uint64_t ) != 8) {
     asm volatile ( "wfi" );
     __builtin_unreachable();
@@ -69,9 +64,8 @@ void __attribute__(( noreturn, noinline )) c_el3_nommu( Core *core, int number )
     // Only one core should do this, and there is always a core 0.
     number_of_cores = read_number_of_cores();
     first_free_page = (integer_register) (core + number_of_cores);
+    asm volatile ( "dsb sy" );
   }
-
-  set_secure_aarch64();
 
   // Note that this memset will fill the whole stack with zeros, but this routine does
   // not return, so there should be no bad effects.
@@ -81,6 +75,7 @@ void __attribute__(( noreturn, noinline )) c_el3_nommu( Core *core, int number )
   while (first_free_page == 0 || number_of_cores == 0) {}
   // The variables have been initialised by core 0
 
+  // I think this is neat, but it may not work without MMU enabled...
   static uint64_t volatile resume = 0;
   static uint64_t volatile present = 0;
 
@@ -92,6 +87,8 @@ void __attribute__(( noreturn, noinline )) c_el3_nommu( Core *core, int number )
     // Wait for resume to be initialised
     while (resume == 0) {}
   }
+
+  setup_el3_for_reentry( number );
 
   switch (number) {
 #ifdef EL3_RAW_DISPLAY

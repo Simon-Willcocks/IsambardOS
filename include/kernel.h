@@ -1,5 +1,5 @@
 #include "types.h"
 
-typedef struct Core {
-  uint64_t stack[CORE_STACK_SIZE];
-} Core;
+#include "core_isambard.h"
+
+typedef struct isambard_core Core;

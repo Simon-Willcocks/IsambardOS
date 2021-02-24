@@ -111,6 +111,18 @@ static inline Aarch64_VMSA_entry Aarch64_VMSA_uncached_memory( Aarch64_VMSA_entr
   return entry;
 }
 
+static inline Aarch64_VMSA_entry Aarch64_VMSA_not_global( Aarch64_VMSA_entry entry )
+{
+  entry.not_global = 1;
+  return entry;
+}
+
+static inline Aarch64_VMSA_entry Aarch64_VMSA_global( Aarch64_VMSA_entry entry )
+{
+  entry.not_global = 0;
+  return entry;
+}
+
 static inline Aarch64_VMSA_entry Aarch64_VMSA_priv_ro_( Aarch64_VMSA_entry entry, int level )
 {
   if (level == 1) entry.privileged_execute_never = 1;
