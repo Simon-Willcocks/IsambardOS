@@ -35,7 +35,8 @@ static inline thread_context *thread_from_code( uint32_t c )
 #include "doubly_linked_lists.h"
 DEFINE_DOUBLE_LINKED_LIST( thread, thread_context, next, prev, list );
 
-#define BSOD( n ) asm ( "0: wfi\n\tb 0b" );
+#define BSOD_TOSTRING( n ) #n
+#define BSOD( n ) asm ( "0: smc " BSOD_TOSTRING( n ) "\n\tb 0b" );
 
 extern uint8_t virtual_stack_offset;
 
@@ -97,10 +98,7 @@ const uint32_t max_physical_memory_gb = 8;
 const uint64_t max_physical_memory = max_physical_memory_gb * (1ull << 30);
 uint64_t memory_allocator_driver_start = max_physical_memory;
 
-static void set_asid( Core *core, uint64_t asid )
-{
-  asm volatile ( "\tmsr TTBR0_EL1, %[table]" :: [table] "r" ((((uint64_t) asid) << 48) | (integer_register) &core->physical_address->core_tt_l1) );
-}
+static void set_asid( Core *core, uint64_t asid );
 
 // Linker-created symbols are either absolute or relative, *_code_pages,
 // *_data_pages are absolute (see build.sh), *_bin_start, *_bin_end are
@@ -116,6 +114,7 @@ static uint64_t phys_addr( void *kernel_addr )
 #define AARCH64_VECTOR_TABLE_PREFIX SEL1_
 #define HANDLER_EL 1
 
+#if 0
 #define NEVER_HAPPENS BSOD( 0 )
 
 // #define AARCH64_VECTOR_TABLE_SP0_SYNC_CODE NEVER_HAPPENS
@@ -124,6 +123,7 @@ static uint64_t phys_addr( void *kernel_addr )
 #define AARCH64_VECTOR_TABLE_SPX_SYNC_CODE NEVER_HAPPENS
 #define AARCH64_VECTOR_TABLE_SPX_SERROR_CODE NEVER_HAPPENS
 #define AARCH64_VECTOR_TABLE_SPX_IRQ_CODE NEVER_HAPPENS
+#endif
 
 #include "aarch64_c_vector_table.h"
 
@@ -333,11 +333,11 @@ static Interface *obtain_interface()
   } while (!store_exclusive_word( &kernel_free_interface, result->free.next ));
 
   if (result->free.marker != free_marker) {
-    for (;;) { asm ( "wfi" ); }
+    for (;;) { BSOD( __COUNTER__ ) }
   }
 
   if (result->free.next == 0) { // Just emptied the list, allocate some more
-    for (;;) { asm ( "wfi" ); }
+    for (;;) { BSOD( __COUNTER__ ) }
   }
 
   return result;
@@ -703,7 +703,7 @@ void map_initial_storage( Core *core0, unsigned initial_heap, unsigned initial_i
 {
   // Map memory for interfaces (grows up), and heap (grows down)
 
-  if (initial_interfaces < number_of_special_interfaces) for (;;) { asm volatile ( "wfi" ); }
+  if (initial_interfaces < number_of_special_interfaces) for (;;) { BSOD( __COUNTER__ ) }
 
   int heap_pages = pages_needed_for( initial_heap );
   int interface_pages = pages_needed_for( initial_interfaces * sizeof( Interface ) );
@@ -859,7 +859,6 @@ void __attribute__(( noreturn )) enter_secure_el1_himem( Core *core )
     static const int total_heap_space_needed = 65536; // FIXME
     static const int total_number_of_interfaces_needed = 512; // FIXME
 
-//asm volatile ( "smc 23" );
     map_initial_storage( core, total_heap_space_needed, total_number_of_interfaces_needed );
 
     new_memory_for_interfaces( total_number_of_interfaces_needed );
@@ -948,11 +947,11 @@ static thread_switch system_driver_request( Core *core, thread_context *thread )
       uint32_t page = thread->regs[2] >> 12;
 
       if (page >= numberof( shared_system_map )) {
-        for (;;) asm volatile( "wfi" );
+        for (;;) BSOD( __COUNTER__ )
       }
 
       if (shared_system_map[page].raw != Aarch64_VMSA_invalid.raw) {
-        for (;;) asm volatile( "wfi" );
+        for (;;) BSOD( __COUNTER__ )
       }
       core->system_thread_stack.entry[4] = thread->regs[2];
 

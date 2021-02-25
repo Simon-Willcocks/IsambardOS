@@ -60,10 +60,16 @@ void __attribute__(( noreturn, noinline )) c_el3_nommu( Core *core, int number )
     __builtin_unreachable();
   }
 
+  static uint64_t volatile present = 0;
+
   if (number == 0) {
     // Only one core should do this, and there is always a core 0.
     number_of_cores = read_number_of_cores();
     first_free_page = (integer_register) (core + number_of_cores);
+
+    // Until I can sort out a no-exclusive-operators bit manipulation, there're all here...
+    present = (1 << number_of_cores)-1;
+
     asm volatile ( "dsb sy" );
   }
 
@@ -75,47 +81,8 @@ void __attribute__(( noreturn, noinline )) c_el3_nommu( Core *core, int number )
   while (first_free_page == 0 || number_of_cores == 0) {}
   // The variables have been initialised by core 0
 
-  // I think this is neat, but it may not work without MMU enabled...
-  static uint64_t volatile resume = 0;
-  static uint64_t volatile present = 0;
-
-  if (number == 0) {
-    resume = (1ull << number_of_cores) - 1;
-    // In subsequent code segments, use resume = present;
-  }
-  else {
-    // Wait for resume to be initialised
-    while (resume == 0) {}
-  }
-
   setup_el3_for_reentry( number );
 
-  switch (number) {
-#ifdef EL3_RAW_DISPLAY
-  case EL3_RAW_DISPLAY:
-    {
-extern void __attribute__(( noreturn )) el3_no_mmu_display_pages( Core *core );
-
-      clearbit( &resume, number );
-      el3_no_mmu_display_pages( core );
-      // (This core will not be "present", for the rest of the routine.)
-    }
-    break;
-#endif
-  default:
-    {
-      // Insert code that will not block forever, here
-      setbit( &present, number );
-      clearbit( &resume, number );
-    }
-    break;
-  }
-
-  while (resume != 0) {}
-  // All the cores have executed the preceding switch, by this point,
-  // or are never going to return from it. The ones that did return
-  // have set a bit in present, which can be used to initialise resume
-  // for the next sync.
   run_at_secure_el1( core, number, &present, enter_secure_el1 );
 
   __builtin_unreachable();
