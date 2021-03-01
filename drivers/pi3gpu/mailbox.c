@@ -27,7 +27,7 @@ retry:
   flush_and_invalidate_cache( mailbox_request, mailbox_request[0] );
   static uint32_t request = 0;
   if (request == 0) {
-    uint32_t phys_addr = physical_address_of( mailbox_request );
+    uint64_t phys_addr = DRIVER_SYSTEM__physical_address_of( driver_system(), NUMBER_from_pointer( &mailbox_request ) ).r;
     request = 0x8 | phys_addr;
   }
 

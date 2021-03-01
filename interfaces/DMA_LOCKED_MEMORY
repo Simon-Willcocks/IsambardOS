@@ -1,0 +1,4 @@
+
+interface DMA_LOCKED_MEMORY
+copy_to_memory IN destination: DMA_LOCKED_MEMORY
+end

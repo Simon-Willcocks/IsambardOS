@@ -1,0 +1,5 @@
+
+interface DMA_SINK
+width OUT bits: NUMBER
+read_from IN source: DMA_LOCKED_MEMORY
+end

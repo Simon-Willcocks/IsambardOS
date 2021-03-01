@@ -1,0 +1,26 @@
+/* Copyright (C) 2014-2017 Free Software Foundation, Inc.
+   Copying and distribution of this script, with or without modification,
+   are permitted in any medium without royalty provided the copyright
+   notice and this notice are preserved.  */
+OUTPUT_FORMAT("elf64-littleaarch64", "elf64-bigaarch64",
+	      "elf64-littleaarch64")
+OUTPUT_ARCH(aarch64)
+ENTRY(_start)
+SECTIONS
+{
+  . = 0x200000000;
+  start = .;
+  .init : { *(.init) }
+  .text : { *(.text) }
+  .rodata : { *(.rodata) }
+  . = ALIGN(4096); 
+  code_pages = ABSOLUTE((. - start) >> 12);
+  data_start = .;
+  .data : { *(.data) }
+  .bss : { *(.bss) }
+  . = ALIGN (4096);
+  first_free_page = .;
+  pad_to_here = .; /* Needed for build.sh */
+  data_pages = ABSOLUTE((. - data_start) >> 12);
+}
+

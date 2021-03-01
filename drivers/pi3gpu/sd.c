@@ -409,14 +409,24 @@ int emmc_service_handler( emmc_service_object *object, uint64_t call )
 }
 
 STACK_PER_OBJECT( emmc_service_object, 64 );
-SIMPLE_CALL_VENEER( emmc_service );
 
 static struct emmc_service_object_container __attribute__(( aligned(16) )) emmc_service_singleton = { { 0 }, .object = { .lock = 0 } };
 
+ISAMBARD_INTERFACE( BLOCK_DEVICE )
+#include "interfaces/provider/BLOCK_DEVICE.h"
+#include "interfaces/provider/SERVICE.h"
+
+typedef union { integer_register r; emmc_service_object *p; } EMMC;
+
+ISAMBARD_BLOCK_DEVICE__SERVER( EMMC )
+ISAMBARD_SERVICE__SERVER( EMMC )
+ISAMBARD_PROVIDER( EMMC, AS_BLOCK_DEVICE( EMMC ) ; AS_SERVICE( EMMC ) )
+ISAMBARD_PROVIDER_UNLOCKED_PER_OBJECT_STACK( EMMC )
+
 void expose_emmc()
 {
-  Object service = object_to_pass_to( system, emmc_service_veneer, (uint64_t) &emmc_service_singleton.object.lock );
-
-  register_service( 0x5344, service ); // FIXME crc32
+  EMMC emmc = { .p = &emmc_service_singleton.object };
+  SERVICE obj = EMMC_SERVICE_to_pass_to( system.r, emmc );
+  register_service( "EMMC", obj );
 }
 

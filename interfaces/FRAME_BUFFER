@@ -1,0 +1,3 @@
+interface FRAME_BUFFER
+get_frame_buffer OUT physical_memory: PHYSICAL_MEMORY_BLOCK
+end

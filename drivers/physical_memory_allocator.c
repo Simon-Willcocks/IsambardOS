@@ -8,7 +8,7 @@ asm ( ".section .init"
     "\n.global _start"
     "\n.type _start, %function"
     "\n_start:"
-    "\n\tadr  x9, system"
+    "\n\tadr  x9, system" // From libdriver.c
     "\n\tstr  x0, [x9]"
     "\n\tadr  x10, stack"
     "\n\tadd sp, x10, #8*"STACK_SIZE_STRING( STACK_SIZE )
@@ -17,7 +17,6 @@ asm ( ".section .init"
     "\n.previous" );
 
 unsigned long long stack_lock = 0;
-unsigned long long system = 0; // Initialised by _start code
 unsigned long long __attribute__(( aligned( 16 ) )) stack[STACK_SIZE] = { 0x33333333 }; // Just a marker
 
 // The Memory Manager driver is the only code in the system that can access all memory.

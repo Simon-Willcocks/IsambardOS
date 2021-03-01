@@ -1,0 +1,6 @@
+
+interface SYSTEM
+create_thread IN code: NUMBER, stack_top: NUMBER OUT id: NUMBER
+get_service IN name_crc: NUMBER OUT service: SERVICE
+register_service IN name_crc: NUMBER, service: SERVICE
+end

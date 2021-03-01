@@ -1,0 +1,5 @@
+
+interface BLOCK_STORAGE
+block_size OUT size: NUMBER
+read_block IN index: NUMBER, destination: WRITABLE_PHYSICAL_MEMORY
+end

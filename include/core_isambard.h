@@ -81,7 +81,7 @@ struct isambard_core {
 
 // Packed objects
 typedef union {
-  uint64_t raw;
+  uint64_t r;
   struct __attribute__(( packed )) {
     uint64_t start_page:24; // Max 16GB memory
     uint64_t page_count:20;  // Max 4GB memory in one block
@@ -91,7 +91,7 @@ typedef union {
 } ContiguousMemoryBlock;
 
 typedef union {
-  uint64_t raw;
+  uint64_t r;
   struct __attribute__(( packed )) {
     uint64_t start_page:24; // Max 16GB memory
     uint64_t page_count:20;  // Max 4GB memory in one block
@@ -102,7 +102,7 @@ typedef union {
 } VirtualMemoryBlock;
 
 typedef union {
-  uint64_t raw;
+  uint64_t r;
   struct __attribute__(( packed )) {
     uint64_t heap_offset_lsr4:32;
     uint64_t map_object:20;

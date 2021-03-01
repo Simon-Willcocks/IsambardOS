@@ -572,7 +572,7 @@ static VirtualMemoryBlock *find_vmb( thread_context *thread, uint64_t fa )
   uint64_t fa_page = (fa >> level3_lsb);
   Interface *map = interfaces()+thread->current_map;
 
-  MapValue mv = { .raw = map->object.as_number };
+  MapValue mv = { .r = map->object.as_number };
 
   VirtualMemoryBlock *vmb = heap_pointer_from_offset_lsr4( mv.heap_offset_lsr4 );
 
@@ -622,7 +622,7 @@ static bool find_and_map_memory( Core *core, thread_context *thread, uint64_t fa
 
     if (memory_provider->provider == system_map_index
      && memory_provider->handler == System_Service_PhysicalMemoryBlock) {
-      ContiguousMemoryBlock cmb = { .raw = memory_provider->object.as_number };
+      ContiguousMemoryBlock cmb = { .r = memory_provider->object.as_number };
       uint64_t physical_memory_start = cmb.start_page << 12;
       uint64_t virtual_memory_start = vmb->start_page << 12;
 
@@ -798,7 +798,7 @@ void initialise_driver_maps( Core *core0, integer_register free_memory_start, in
         .map_object = index_from_interface( map_interface ),
         .number_of_vmbs = INITIAL_VMBs_PER_DRIVER };
 
-    map_interface->object.as_number = mv.raw;
+    map_interface->object.as_number = mv.r;
     map_interface->user = index_from_interface( map_interface );
     map_interface->provider = system_map_index;
     map_interface->handler = System_Service_Map;
@@ -815,17 +815,17 @@ void initialise_driver_maps( Core *core0, integer_register free_memory_start, in
     vmb[1].executable = 0;
     vmb[1].memory_block = index_from_interface( data_interface );
 
-    vmb[2].raw = 0;
+    vmb[2].r = 0;
 
     { ContiguousMemoryBlock cmb = { .start_page = (uint32_t) drivers[i].start >> 12, .page_count = drivers[i].code_pages, .memory_type = Fully_Cacheable };
-      code_interface->object.as_number = cmb.raw;
+      code_interface->object.as_number = cmb.r;
       code_interface->user = index_from_interface( map_interface );
       code_interface->provider = system_map_index;
       code_interface->handler = System_Service_PhysicalMemoryBlock;
     }
 
     { ContiguousMemoryBlock cmb = { .start_page = ((uint32_t) drivers[i].start >> 12) + drivers[i].code_pages, .page_count = drivers[i].data_pages, .memory_type = Fully_Cacheable };
-      data_interface->object.as_number = cmb.raw;
+      data_interface->object.as_number = cmb.r;
       data_interface->user = index_from_interface( map_interface );
       data_interface->provider = system_map_index;
       data_interface->handler = System_Service_PhysicalMemoryBlock;

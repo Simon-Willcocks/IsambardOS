@@ -37,7 +37,7 @@ asm ( ".section .text"
     "\n\tret"
     "\n.previous" );
 
-asm ( "physical_memory_block_service_entry:" ); // FIXME
+asm ( "physical_memory_block_service_entry: wfi" ); // FIXME
 
 asm (
     ".section .text"
@@ -57,7 +57,7 @@ asm (
     "\n\tadr x17, map_stack + 8 * 64"
     "\n\tmov sp, x17"
 
-    "\n\tbl map_service_c_code"
+    "\n\tbl MapValue_call_handler"
 
     // Release
     "\n\tadr  x17, map_stack_lock"
@@ -91,18 +91,36 @@ asm (
 #include "atomic.h"
 #include "system_services.h"
 
-typedef struct { integer_register r; } NUMBER;
+
+// List all the interfaces known to this file, and to those interfaces
+
+#include "interfaces/client/PHYSICAL_MEMORY_BLOCK.h"
+#include "interfaces/client/SERVICE.h"
+#include "interfaces/client/INTERRUPT_HANDLER.h"
+#include "interfaces/client/PHYSICAL_MEMORY_BLOCK.h"
+// ContiguousMemoryBlock implements this interface
+#include "interfaces/provider/PHYSICAL_MEMORY_BLOCK.h"
+// MapValue implements both of these interfaces
+#include "interfaces/provider/SYSTEM.h"
 #include "interfaces/provider/DRIVER_SYSTEM.h"
+
+ISAMBARD_PHYSICAL_MEMORY_BLOCK__SERVER( ContiguousMemoryBlock )
+ISAMBARD_PROVIDER( ContiguousMemoryBlock, AS_PHYSICAL_MEMORY_BLOCK( ContiguousMemoryBlock ) )
+ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( ContiguousMemoryBlock, map_stack_lock, map_stack, 64 * 8 )
+
+ISAMBARD_SYSTEM__SERVER( MapValue )
+ISAMBARD_DRIVER_SYSTEM__SERVER( MapValue )
+ISAMBARD_PROVIDER( MapValue, AS_DRIVER_SYSTEM( MapValue ); AS_SYSTEM( MapValue ) )
+ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( MapValue, map_stack_lock, map_stack, 64 * 8 )
 
 static volatile bool board_initialised = false;
 
 unsigned long long stack_lock = 0;
-unsigned long long system = 0; // Initialised by _start code
 unsigned long long __attribute__(( aligned( 16 ) )) stack[STACK_SIZE] = { 0x33333333 }; // Just a marker
 
 uint64_t __attribute__(( aligned( 16 ) )) map_stack[64];
 
-uint64_t map_stack_lock[4] = { 0 };
+uint64_t map_stack_lock = 0;
 
 extern uint64_t stack_top;
  
@@ -131,7 +149,7 @@ static uint64_t vmb_lock = 0;
 static VirtualMemoryBlock vmbs[MAX_VMBS] = { 0 };
 
 struct service {
-  Object provider;
+  SERVICE service;
   uint32_t name;
 };
 
@@ -141,24 +159,24 @@ static int free_service = 0;
 static uint64_t ms_ticks = 0;
 
 /* System (Pi 3) specific code */
-static Object interrupt_handlers[12] = { 0 };
+static INTERRUPT_HANDLER interrupt_handlers[12] = { { .r = 0 } };
 
-void board_remove_interrupt_handler( Object handler, unsigned interrupt )
+void board_remove_interrupt_handler( INTERRUPT_HANDLER handler, unsigned interrupt )
 {
-  if (interrupt_handlers[interrupt] != handler) {
+  if (interrupt_handlers[interrupt].r != handler.r) {
     for (;;) { asm volatile ( "svc 1\n\tsvc 3" ); }
   }
-  interrupt_handlers[interrupt] = 0;
+  interrupt_handlers[interrupt].r = 0;
   // FIXME release handler object
 }
 
-void board_register_interrupt_handler( Object handler, unsigned interrupt )
+void board_register_interrupt_handler( INTERRUPT_HANDLER handler, unsigned interrupt )
 {
   if (interrupt >= 12) {
     // Out of range
     for (;;) { asm volatile ( "svc 1\n\tsvc 3" ); }
   }
-  if (interrupt_handlers[interrupt] != 0) {
+  if (interrupt_handlers[interrupt].r != 0) {
     // Already claimed
     for (;;) { asm volatile ( "svc 1\n\tsvc 4" ); }
   }
@@ -235,9 +253,9 @@ interrupts_handled[0]+= 0x100000;
         device_pages.QA7.Local_timer_write_flags = (1 << 31);
 	ms_ticks ++;
       }
-      if (interrupt_handlers[i] != 0) {
+      if (interrupt_handlers[i].r != 0) {
 interrupts_handled[i]+=16;
-        inter_map_procedure_0p( interrupt_handlers[i], 0 );
+        INTERRUPT_HANDLER__interrupt( interrupt_handlers[i] );
       }
       else {
 interrupts_handled[i]+= 0x10000;
@@ -268,11 +286,126 @@ void board_initialise()
 
 /* End board specific code */
 
-#include "interfaces/provider/DRIVER_SYSTEM.h"
+PHYSICAL_MEMORY_BLOCK MapValue__DRIVER_SYSTEM__get_device_page( MapValue o, NUMBER physical_address )
+{
+  o = o;
+  ContiguousMemoryBlock cmb = { .start_page = physical_address.r >> 12,
+                                .page_count = 1,
+                                .memory_type = Device_nGnRnE };
+  // Don't use the ContiguousMemoryBlock_PHYSICAL_MEMORY_BLOCK_to_return routine, the handler must be the
+  // special value for the kernel to recognise it.
+  PHYSICAL_MEMORY_BLOCK result;
+  result.r = object_to_return( (void*) System_Service_PhysicalMemoryBlock, cmb.r );
+  return result;
+}
 
+PHYSICAL_MEMORY_BLOCK MapValue__DRIVER_SYSTEM__get_physical_memory_block( MapValue o, NUMBER start, NUMBER size )
+{
+  o = o;
+  ContiguousMemoryBlock cmb = { .start_page = start.r >> 12,
+                                .page_count = size.r >> 12,
+                                .memory_type = Fully_Cacheable };
+  // Don't use the ContiguousMemoryBlock_PHYSICAL_MEMORY_BLOCK_to_return routine, the handler must be the
+  // special value for the kernel to recognise it.
+  PHYSICAL_MEMORY_BLOCK result;
+  result.r = object_to_return( (void*) System_Service_PhysicalMemoryBlock, cmb.r );
+  return result;
+}
+
+void MapValue__DRIVER_SYSTEM__map_at( MapValue o, PHYSICAL_MEMORY_BLOCK block, NUMBER start )
+{
+  claim_lock( &vmb_lock );
+        // FIXME Expand number of blocks
+        // FIXME Allow for addresses not in order
+        // FIXME Invalid parameters
+  ContiguousMemoryBlock cmb;
+  cmb.r = make_special_request( Isambard_System_Service_ReadInterface, block );
+
+  make_special_request( Isambard_System_Service_ReadHeap, o.heap_offset_lsr4 << 4, o.number_of_vmbs * sizeof( VirtualMemoryBlock ), vmbs );
+
+  for (int i = 0; i < o.number_of_vmbs; i++) {
+    if (vmbs[i].page_count == 0) {
+      vmbs[i].start_page = start.r >> 12;
+      vmbs[i].page_count = cmb.page_count;
+      vmbs[i].read_only = 0;
+      vmbs[i].executable = 0;
+      vmbs[i].memory_block = block.r;
+      vmbs[i+1].r = 0;
+      break;
+    }
+  }
+
+  make_special_request( Isambard_System_Service_WriteHeap, o.heap_offset_lsr4 << 4, o.number_of_vmbs * sizeof( VirtualMemoryBlock ), vmbs );
+  release_lock( &vmb_lock );
+}
+
+NUMBER MapValue__SYSTEM__create_thread( MapValue o, NUMBER code, NUMBER stack_top )
+{
+  o = o;
+  return NUMBER_from_integer_register( make_special_request( Isambard_System_Service_Create_Thread, code.r, stack_top.r, 0 ) );
+}
+
+NUMBER MapValue__DRIVER_SYSTEM__physical_address_of( MapValue o, NUMBER va )
+{
+  o = o; va = va;
+  // This call is intercepted by the kernel, since it requires EL1 privileges
+  return NUMBER_from_integer_register( unknown_call( DRIVER_SYSTEM_physical_address_of ) ); // FIXME
+}
+
+void MapValue__SYSTEM__register_service( MapValue o, NUMBER name_crc, SERVICE service )
+{
+  o = o;
+  struct service *s = &services[free_service++]; // FIXME limit! LOCK!!!
+  s->name = name_crc.r;
+  s->service = service;
+}
+
+SERVICE MapValue__SYSTEM__get_service( MapValue o, NUMBER name_crc )
+{
+  o = o;
+  struct service *s = services;
+  while (s < &services[free_service]) {
+    if (s->name == name_crc.r) {
+      return SERVICE_duplicate_to_return( s->service );
+    }
+  }
+  return SERVICE_from_integer_register( 0 );
+}
+
+NUMBER MapValue__DRIVER_SYSTEM__get_core_interrupts_count( MapValue o )
+{
+  o = o;
+  return NUMBER_from_integer_register( this_core.interrupts_count );
+}
+
+NUMBER MapValue__DRIVER_SYSTEM__get_ms_timer_ticks( MapValue o )
+{
+  o = o;
+  return NUMBER_from_integer_register( ms_ticks );
+}
+
+NUMBER MapValue__DRIVER_SYSTEM__get_core_timer_value( MapValue o )
+{
+  o = o;
+  return NUMBER_from_integer_register( core_timer_value() );
+}
+
+void MapValue__DRIVER_SYSTEM__register_interrupt_handler( MapValue o, INTERRUPT_HANDLER handler, NUMBER interrupt )
+{
+  o = o;
+  board_register_interrupt_handler( handler, interrupt.r );
+}
+
+void MapValue__DRIVER_SYSTEM__remove_interrupt_handler( MapValue o, INTERRUPT_HANDLER handler, NUMBER interrupt )
+{
+  o = o;
+  board_remove_interrupt_handler( handler, interrupt.r );
+}
+
+#if 0
 uint64_t map_service_c_code( uint64_t o, uint32_t call, uint64_t p1, uint64_t p2, uint64_t p3 )
 {
-  MapValue mv = { .raw = o };
+  MapValue mv = { .r = o };
 
   switch (call) {
   case DRIVER_SYSTEM_get_device_page:
@@ -280,7 +413,7 @@ uint64_t map_service_c_code( uint64_t o, uint32_t call, uint64_t p1, uint64_t p2
       ContiguousMemoryBlock cmb = { .start_page = p1 >> 12,
                                     .page_count = 1,
                                     .memory_type = Device_nGnRnE };
-      return object_to_return( (void*) System_Service_PhysicalMemoryBlock, cmb.raw );
+      return object_to_return( (void*) System_Service_PhysicalMemoryBlock, cmb.r );
     }
     break;
   case DRIVER_SYSTEM_get_physical_memory_block:
@@ -288,7 +421,7 @@ uint64_t map_service_c_code( uint64_t o, uint32_t call, uint64_t p1, uint64_t p2
       ContiguousMemoryBlock cmb = { .start_page = p1 >> 12,
                                     .page_count = p2 >> 12,
                                     .memory_type = Fully_Cacheable };
-      return object_to_return( (void*) System_Service_PhysicalMemoryBlock, cmb.raw );
+      return object_to_return( (void*) System_Service_PhysicalMemoryBlock, cmb.r );
     }
     break;
   case DRIVER_SYSTEM_map_at:
@@ -298,7 +431,7 @@ uint64_t map_service_c_code( uint64_t o, uint32_t call, uint64_t p1, uint64_t p2
             // FIXME Allow for addresses not in order
             // FIXME Invalid parameters
       ContiguousMemoryBlock cmb;
-      cmb.raw = make_special_request( Isambard_System_Service_ReadInterface, p1 );
+      cmb.r = make_special_request( Isambard_System_Service_ReadInterface, p1 );
 
       make_special_request( Isambard_System_Service_ReadHeap, mv.heap_offset_lsr4 << 4, mv.number_of_vmbs * sizeof( VirtualMemoryBlock ), vmbs );
 
@@ -309,7 +442,7 @@ uint64_t map_service_c_code( uint64_t o, uint32_t call, uint64_t p1, uint64_t p2
           vmbs[i].read_only = 0;
           vmbs[i].executable = 0;
           vmbs[i].memory_block = p1;
-          vmbs[i+1].raw = 0;
+          vmbs[i+1].r = 0;
           break;
         }
       }
@@ -374,13 +507,14 @@ uint64_t map_service_c_code( uint64_t o, uint32_t call, uint64_t p1, uint64_t p2
   }
   for (;;) { asm volatile ( "svc 1\n\tsvc 2" ); }
 }
+#endif
 
 #if 0
 typedef MapExportValue DS;
 
 ISAMBARD_DRIVER_SYSTEM__SERVER( DS );
 
-static PHYSICAL_MEMORY_BLOCK DS__DRIVER_SYSTEM__get_device_page( DS o, unsigned call, NUMBER physical_address )
+static PHYSICAL_MEMORY_BLOCK DS__DRIVER_SYSTEM__get_device_page( DS o, NUMBER physical_address )
 {
   ContiguousMemoryBlock cmb = { .start_page = physical_address >> 12,
                                 .page_count = 1,
@@ -389,47 +523,47 @@ static PHYSICAL_MEMORY_BLOCK DS__DRIVER_SYSTEM__get_device_page( DS o, unsigned 
   return object_to_return( (void*) System_Service_PhysicalMemoryBlock, cmb.raw );
 }
 
-static PHYSICAL_MEMORY_BLOCK DS__DRIVER_SYSTEM__get_physical_memory_block( DS o, unsigned call, NUMBER start, NUMBER size )
+static PHYSICAL_MEMORY_BLOCK DS__DRIVER_SYSTEM__get_physical_memory_block( DS o, NUMBER start, NUMBER size )
 {
 }
 
-static void DS__DRIVER_SYSTEM__map_at( DS o, unsigned call, PHYSICAL_MEMORY_BLOCK block, NUMBER start )
+static void DS__DRIVER_SYSTEM__map_at( DS o, PHYSICAL_MEMORY_BLOCK block, NUMBER start )
 {
 }
 
-static NUMBER DS__DRIVER_SYSTEM__create_thread( DS o, unsigned call, NUMBER code, NUMBER stack_top )
+static NUMBER DS__DRIVER_SYSTEM__create_thread( DS o, NUMBER code, NUMBER stack_top )
 {
 }
 
-static NUMBER DS__DRIVER_SYSTEM__physical_address_of( DS o, unsigned call, NUMBER va )
+static NUMBER DS__DRIVER_SYSTEM__physical_address_of( DS o, NUMBER va )
 {
 }
 
-static void DS__DRIVER_SYSTEM__register_service( DS o, unsigned call, NUMBER name_crc, NUMBER provider )
+static void DS__DRIVER_SYSTEM__register_service( DS o, NUMBER name_crc, NUMBER provider )
 {
 }
 
-static SERVICE DS__DRIVER_SYSTEM__get_service( DS o, unsigned call, NUMBER name_crc )
+static SERVICE DS__DRIVER_SYSTEM__get_service( DS o, NUMBER name_crc )
 {
 }
 
-static NUMBER DS__DRIVER_SYSTEM__get_core_interrupts_count( DS o, unsigned call )
+static NUMBER DS__DRIVER_SYSTEM__get_core_interrupts_count( DS o )
 {
 }
 
-static NUMBER DS__DRIVER_SYSTEM__get_ms_timer_ticks( DS o, unsigned call )
+static NUMBER DS__DRIVER_SYSTEM__get_ms_timer_ticks( DS o )
 {
 }
 
-static NUMBER DS__DRIVER_SYSTEM__get_core_timer_value( DS o, unsigned call )
+static NUMBER DS__DRIVER_SYSTEM__get_core_timer_value( DS o )
 {
 }
 
-static void DS__DRIVER_SYSTEM__register_interrupt_handler( DS o, unsigned call, INTERRUPT_HANDLER handler, NUMBER interrupt )
+static void DS__DRIVER_SYSTEM__register_interrupt_handler( DS o, INTERRUPT_HANDLER handler, NUMBER interrupt )
 {
 }
 
-static void DS__DRIVER_SYSTEM__remove_interrupt_handler( DS o, unsigned call, INTERRUPT_HANDLER handler, NUMBER interrupt )
+static void DS__DRIVER_SYSTEM__remove_interrupt_handler( DS o, INTERRUPT_HANDLER handler, NUMBER interrupt )
 {
 }
 
@@ -476,10 +610,11 @@ void __attribute__(( noreturn )) idle_thread_entry( Object system_interface,
 						    uint64_t free_memory_start,
 						    uint64_t free_memory_end )
 {
+  system_interface = system_interface; // Already stored in system
+
   this_core.number = core_number;
 
   if (core_number == 0) {
-    system = system_interface;
     memory_manager = memory_manager_map;
 
     board_initialise();
@@ -507,7 +642,7 @@ void __attribute__(( noreturn )) idle_thread_entry( Object system_interface,
     if (time == 0) {
       asm volatile ( "svc 3" );
     }
-    uint64_t othertime;
+//    uint64_t othertime;
 //    asm volatile( "mrs %[ot], CNTPCT_EL0" : [ot] "=r" (othertime) );
     for (int i = 0; i < 100000; i++) {
       if (!yield())

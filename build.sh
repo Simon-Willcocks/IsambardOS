@@ -1,13 +1,14 @@
 #! /bin/bash -
 
 if [ ! -e tools/interfaces -o tools/interfaces.c -nt tools/interfaces ] ; then
-  gcc tools/interfaces.c -o tools/interfaces
+  gcc tools/interfaces.c -o tools/interfaces && ln -sf interfaces tools/server && ln -sf interfaces tools/client &&
 fi
 
 (
   cd interfaces
   for i in *
   do
+    echo Interface: $i
     ../tools/client $i > ../include/interfaces/client/$i.h
     ../tools/server $i > ../include/interfaces/provider/$i.h
   done
@@ -52,6 +53,7 @@ MEMORY_DRIVER=physical_memory_allocator
 SPECIAL_DRIVERS="$SYSTEM_DRIVER $MEMORY_DRIVER"
 
 DRIVERS="pi3gpu show_page"
+DRIVERS="pi3gpu "
 
 echo Building drivers: $DRIVERS
 
@@ -65,9 +67,9 @@ build_driver() {
   # Each driver's code and data will be padded to a 4k boundary, the .bin file will be a multiple of 4k in size.
   # Parameters: ld.script for build (used to locate code other than at 0), driver name, symbols to keep
   if [ -d drivers/"$2" ] ; then
-    ${TARGET}gcc -g -DCORE_STACK_SIZE=$STACK_SIZE -I drivers/"$2" drivers/"$2"/*.c -o built_drivers/"$2".elf -T $1 $CFLAGS
+    ${TARGET}gcc -g -DCORE_STACK_SIZE=$STACK_SIZE -I drivers/"$2" drivers/libdrivers.c drivers/"$2"/*.c -o built_drivers/"$2".elf -T $1 $CFLAGS
   else
-    ${TARGET}gcc -g -DCORE_STACK_SIZE=$STACK_SIZE drivers/"$2".c -o built_drivers/"$2".elf -T $1 $CFLAGS
+    ${TARGET}gcc -g -DCORE_STACK_SIZE=$STACK_SIZE drivers/libdrivers.c drivers/"$2".c -o built_drivers/"$2".elf -T $1 $CFLAGS
   fi &&
   # elf object file to binary, runnable code and data
   ${TARGET}objcopy -O binary built_drivers/"$2".elf built_drivers/"$2".bin --gap-fill 42 --pad-to $(( $( symbol built_drivers/"$2".elf pad_to_here ) )) &&
@@ -78,13 +80,13 @@ build_driver() {
   ${TARGET}objdump -x --source --disassemble built_drivers/"$2".elf > built_drivers/"$2".dump
 }
 
-build_driver system_driver.ld.script "$SYSTEM_DRIVER"
+build_driver system_driver.ld.script "$SYSTEM_DRIVER" &&
 
-build_driver memory_driver.ld.script "$MEMORY_DRIVER"
+build_driver memory_driver.ld.script "$MEMORY_DRIVER" &&
 
 for driver in $DRIVERS
 do
-  build_driver driver.ld.script "$driver" || break
+  build_driver driver.ld.script "$driver" || exit 1
 done
 
 (

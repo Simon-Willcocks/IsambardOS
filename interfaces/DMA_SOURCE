@@ -1,0 +1,5 @@
+
+interface DMA_SOURCE
+width OUT bits: NUMBER
+send_to IN destination: DMA_LOCKED_MEMORY
+end

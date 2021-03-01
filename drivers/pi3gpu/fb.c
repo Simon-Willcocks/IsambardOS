@@ -230,7 +230,7 @@ static void show_page( uint32_t *number )
   }
 }
 
-Object screen_page = 0;
+PHYSICAL_MEMORY_BLOCK screen_page = { .r = 0 };
 bool screen_mapped = false;
 
 void map_screen();
@@ -256,7 +256,8 @@ void initialise_display()
           16, 0,   0, 0, 0, 0,    // All zeros
           0 }; // End of tags tag
 
-  uint64_t mailbox_request_physical_address = physical_address_of( mailbox_request );
+  uint64_t mailbox_request_physical_address = DRIVER_SYSTEM__physical_address_of( driver_system(),
+                NUMBER_from_pointer( &mailbox_request ) ).r;
 
   while (devices.mailbox[1].status & 0x80000000) { // Tx full
     yield();
@@ -287,7 +288,7 @@ void initialise_display()
 
   uint32_t fake_size = (memory_size + (2 << 20)-1) & ~((2ull << 20)-1);
   // Size made to multiple of 2M. Not true, but quick to implement! FIXME when find_and_map_memory is more refined
-  screen_page = get_physical_memory_block( physical_address, fake_size );
+  screen_page = DRIVER_SYSTEM__get_physical_memory_block( driver_system(), NUMBER_from_integer_register( physical_address ), NUMBER_from_integer_register( fake_size ) );
 
 
   map_screen();
@@ -300,9 +301,9 @@ void initialise_display()
 void map_screen()
 {
   if (!screen_mapped) {
-    while (screen_page == 0) { initialise_display(); }
+    while (screen_page.r == 0) { initialise_display(); }
 
-    map_physical_block_at( screen_page, (uint64_t) mapped_address );
+    DRIVER_SYSTEM__map_at( driver_system(), screen_page, NUMBER_from_integer_register( (uint64_t) mapped_address ) );
     screen_mapped = true;
   }
 }
@@ -311,7 +312,7 @@ typedef struct {
   uint64_t lock; // Always first element in an exposed object.
   uint64_t count;
 } fb_service_object;
-
+#if 0
 int fb_service_handler( fb_service_object *object, uint64_t call )
 {
   object->count++;
@@ -335,10 +336,7 @@ int fb_service_handler( fb_service_object *object, uint64_t call )
 
   default:
     if (!screen_mapped) {
-      while (screen_page == 0) { initialise_display(); }
-
-      map_physical_block_at( screen_page, (uint64_t) mapped_address );
-      screen_mapped = true;
+      map_screen();
     }
 
     show_word( 1700, 16, call, Red );
@@ -347,15 +345,32 @@ int fb_service_handler( fb_service_object *object, uint64_t call )
   }
   return 1;
 }
-
+#endif
 STACK_PER_OBJECT( fb_service_object, 64 );
-SIMPLE_CALL_VENEER( fb_service );
 
 static struct fb_service_object_container __attribute__(( aligned(16) )) fb_service_singleton = { { 0 }, .object = { .lock = 0 } };
 
+ISAMBARD_INTERFACE( FRAME_BUFFER )
+
+#include "interfaces/provider/FRAME_BUFFER.h"
+#include "interfaces/provider/SERVICE.h"
+
+typedef union { integer_register r; fb_service_object *p; } FB;
+
+ISAMBARD_FRAME_BUFFER__SERVER( FB )
+ISAMBARD_SERVICE__SERVER( FB )
+ISAMBARD_PROVIDER( FB, AS_FRAME_BUFFER( FB ) ; AS_SERVICE( FB ) )
+ISAMBARD_PROVIDER_UNLOCKED_PER_OBJECT_STACK( FB )
+
 void expose_frame_buffer()
 {
-  Object service = object_to_pass_to( system, fb_service_veneer, (uint64_t) &fb_service_singleton.object.lock );
+  FB fb = { .p = &fb_service_singleton.object };
+  SERVICE obj = FB_SERVICE_to_pass_to( system.r, fb );
+  register_service( "Frame Buffer", obj );
+}
 
-  register_service( 0xfb, service ); // FIXME crc32
+PHYSICAL_MEMORY_BLOCK FB__FRAME_BUFFER__get_frame_buffer( FB o )
+{
+  map_screen();
+  return PHYSICAL_MEMORY_BLOCK_duplicate_to_return( screen_page );
 }

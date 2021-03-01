@@ -6,7 +6,7 @@ register uint32_t this_thread asm("x18");
 
 void entry();
 
-typedef uint32_t Object;
+typedef integer_register Object;
 
 #if 0
 // Taken from newlib/libc/machine/aarch64/setjmp.S
@@ -53,9 +53,20 @@ typedef uint32_t Object;
 #define STACK_SIZE_STRINGX(s) #s
 #define STACK_SIZE_STRING(s) STACK_SIZE_STRINGX(s)
 
-extern unsigned long long stack_lock;
-extern unsigned long long system; // Initialised by _start code
-extern unsigned long long __attribute__(( aligned( 16 ) )) stack[];
+#include "isambard_client.h"
+ISAMBARD_INTERFACE( DRIVER_SYSTEM )
+ISAMBARD_INTERFACE( SYSTEM )
+ISAMBARD_INTERFACE( SERVICE )
+ISAMBARD_INTERFACE( PHYSICAL_MEMORY_BLOCK )
+ISAMBARD_INTERFACE( INTERRUPT_HANDLER )
+#include "interfaces/client/SYSTEM.h"
+#include "interfaces/client/DRIVER_SYSTEM.h"
+
+extern integer_register stack_lock;
+extern SYSTEM system; // Initialised by _start code
+extern integer_register __attribute__(( aligned( 16 ) )) stack[]; // Sized in one driver C file
+
+static inline DRIVER_SYSTEM driver_system() { return DRIVER_SYSTEM_from_integer_register( system.r ); }
 
 // Busy-wait for lock to be zero
 // Write the (non-zero) address of lock to lock to lock the stack
@@ -89,79 +100,7 @@ asm ( ".section .init" \
     "\n.previous" )
 
 
-asm ( ".section .text"
-    "\nobject_to_return:"
-    "\n\tstp x29, x30, [sp, #-16]!"
-    "\n\tsvc 0xfff9"
-    "\n\tldp x29, x30, [sp], #16"
-    "\n\tret"
-    "\nobject_to_pass_to:"
-    "\n\tstp x29, x30, [sp, #-16]!"
-    "\n\tsvc 0xfff8"
-    "\n\tldp x29, x30, [sp], #16"
-    "\n\tret"
-    "\nduplicate_to_pass_to:"
-    "\n\tstp x29, x30, [sp, #-16]!"
-    "\n\tsvc 0xfff7"
-    "\n\tldp x29, x30, [sp], #16"
-    "\n\tret"
-    "\nduplicate_to_return:"
-    "\n\tstp x29, x30, [sp, #-16]!"
-    "\n\tsvc 0xfff6"
-    "\n\tldp x29, x30, [sp], #16"
-    "\n\tret"
-    "\n.previous" );
-
-extern Object duplicate_to_return( Object original );
-extern Object duplicate_to_pass_to( Object object, Object original );
-extern Object object_to_return( void *handler, uint64_t value );
-extern Object object_to_pass_to( Object user, void *handler, uint64_t value );
-
-
-// This is just a temporary approach, to be replaced with cproto/crc32 stuff, TBD
-enum SystemCall {
-  is_a
-  , DRIVER_SYSTEM_get_device_page
-  , DRIVER_SYSTEM_map_at
-  , DRIVER_SYSTEM_get_physical_memory_block
-  , DRIVER_SYSTEM_register_service
-  , DRIVER_SYSTEM_get_service
-  , DRIVER_SYSTEM_get_core_timer_value
-  , DRIVER_SYSTEM_get_core_interrupts_count
-  , DRIVER_SYSTEM_get_ms_timer_ticks
-  , DRIVER_SYSTEM_register_interrupt_handler
-  , DRIVER_SYSTEM_remove_interrupt_handler
-  , DRIVER_SYSTEM_create_thread
-  
-  // Implemented in kernel (at the moment)
-  , DRIVER_SYSTEM_physical_address_of = 999
-};
-
-asm ( ".section .text"
-    "\ninter_map_call_0p:"
-    "\ninter_map_call_1p:"
-    "\ninter_map_call_2p:"
-    "\ninter_map_call_3p:"
-    "\ninter_map_procedure_0p:"
-    "\ninter_map_procedure_1p:"
-    "\ninter_map_procedure_2p:"
-    "\ninter_map_procedure_3p:"
-    "\ninter_map_call_returning_object_0p:"
-    "\ninter_map_call_returning_object_1p:"
-    "\ninter_map_call_returning_object_2p:"
-    "\n\tstp x29, x30, [sp, #-16]!"
-    "\n\tsvc 0xfffe"
-    "\n\tldp x29, x30, [sp], #16"
-    "\n\tret"
-    "\n.previous" );
-
-asm ( ".section .text"
-    "\nyield:"
-    "\n\tstp x29, x30, [sp, #-16]!"
-    "\n\tsvc 0xfffc"
-    "\n\tldp x29, x30, [sp], #16"
-    "\n\tret"
-    "\n.previous" );
+enum { DRIVER_SYSTEM_physical_address_of = 0x4a274f85 };
 
 extern bool yield();
 extern void inter_map_procedure_0p( Object target, uint64_t call );
@@ -176,72 +115,50 @@ extern uint64_t inter_map_call_1p( Object target, uint64_t call, uint64_t p1 );
 extern uint64_t inter_map_call_2p( Object target, uint64_t call, uint64_t p1, uint64_t p2 );
 extern uint64_t inter_map_call_3p( Object target, uint64_t call, uint64_t p1, uint64_t p2, uint64_t p3 );
 
-// Always a single page of read-write, device memory; only for drivers' use
-static inline Object get_device_page( uint64_t page_start )
+static inline integer_register create_thread( void *code, uint64_t *stack_top )
 {
-  return inter_map_call_returning_object_1p( system, DRIVER_SYSTEM_get_device_page, page_start );
-}
-
-static inline Object get_physical_memory_block( uint64_t page_start, uint32_t length )
-{
-  return inter_map_call_returning_object_2p( system, DRIVER_SYSTEM_get_physical_memory_block, page_start, length );
-}
-
-static inline void map_physical_block_at( Object physical_block, uint64_t virtual_address )
-{
-  inter_map_call_2p( system, DRIVER_SYSTEM_map_at, (uint64_t) physical_block, virtual_address );
-}
-
-static inline uint64_t physical_address_of( void *virtual_address )
-{
-  return inter_map_call_1p( system, DRIVER_SYSTEM_physical_address_of, (uint64_t) virtual_address );
-}
-
-static inline uint32_t create_thread( void *code, uint64_t *stack_top, void *thread_local_storage )
-{
-  return inter_map_call_3p( system, DRIVER_SYSTEM_create_thread, (uint64_t) code, (uint64_t) stack_top, (uint64_t) thread_local_storage );
-}
-
-static inline void register_interrupt_handler( Object handler, int interrupt )
-{
-  inter_map_procedure_2p( system, DRIVER_SYSTEM_register_interrupt_handler, handler, interrupt );
-}
-
-static inline void remove_interrupt_handler( Object handler, int interrupt )
-{
-  inter_map_procedure_2p( system, DRIVER_SYSTEM_remove_interrupt_handler, handler, interrupt );
-}
-
-static inline void register_service( uint32_t name, Object service )
-{
-  inter_map_procedure_2p( system, DRIVER_SYSTEM_register_service, name, service );
-}
-
-static inline Object get_service( uint32_t name )
-{
-  return inter_map_call_1p( system, DRIVER_SYSTEM_get_service, name );
-}
-
-static inline uint64_t get_core_timer_value()
-{
-  return inter_map_call_0p( system, DRIVER_SYSTEM_get_core_timer_value );
-}
-
-static inline uint64_t get_core_interrupts_count()
-{
-  return inter_map_call_0p( system, DRIVER_SYSTEM_get_core_interrupts_count );
-}
-
-static inline uint64_t get_core_ms_timer_ticks()
-{
-  return inter_map_call_0p( system, DRIVER_SYSTEM_get_ms_timer_ticks );
+  return SYSTEM__create_thread( system, NUMBER_from_integer_register( (integer_register) code ), NUMBER_from_integer_register( (integer_register) stack_top ) ).r;
 }
 
 
-// Returns number of interrupts detected before the call returned.
+// crc32 code taken from https://create.stephan-brumme.com/crc32/
+// Not for long strings or binary data.
+
+static inline uint32_t crc32(const void* data, uint32_t previousCrc32)
+{
+  const uint32_t Polynomial = 0xEDB88320;
+
+  uint32_t crc = ~previousCrc32; // same as previousCrc32 ^ 0xFFFFFFFF
+  unsigned char* current = (unsigned char*) data;
+  while ('\0' != *current) {
+    crc ^= *current++;
+    for (unsigned int j = 0; j < 8; j++) {
+      crc = (crc >> 1) ^ (-(int)(crc & 1) & Polynomial);
+    }
+  }
+  return ~crc; // same as crc ^ 0xFFFFFFFF
+}
+
+static inline NUMBER name_code( const char *name )
+{
+  return NUMBER_from_integer_register( crc32( name, 0 ) );
+}
+
+static inline Object get_service( const char *name )
+{
+  return SYSTEM__get_service( system, name_code( name ) ).r;
+}
+
+static inline void register_service( const char *name, SERVICE service )
+{
+  SYSTEM__register_service( system, name_code( name ), service );
+}
+
+
+// Returns number of wake_thread detected before the call returned.
 // 0 Means the thread was paused (this is expected behaviour)
-// 1 Means the interrupt occurred before wait_until_woken was called.
-// >1 Means multiple interrupts occurred
+// 1 Means the wake_thread occurred before wait_until_woken was called.
+// >1 Means multiple wake_threads occurred
 // TODO Add timeout parameter (return -ve on timeout)
 static inline uint64_t wait_until_woken()
 {
