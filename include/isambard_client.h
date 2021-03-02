@@ -44,5 +44,8 @@ asm (
 "Isambard_11:\n"
 "Isambard_21:\n"
 "Isambard_31:\n"
-"svc 0xfffe" );
-
+    "\n\tstp x29, x30, [sp, #-16]!"
+    "\n\tsvc 0xfffe"
+    "\n\tldp x29, x30, [sp], #16"
+    "\n\tret"
+    "\n.previous" );

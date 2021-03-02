@@ -100,8 +100,6 @@ asm ( ".section .init" \
     "\n.previous" )
 
 
-enum { DRIVER_SYSTEM_physical_address_of = 0x4a274f85 };
-
 extern bool yield();
 extern void inter_map_procedure_0p( Object target, uint64_t call );
 extern void inter_map_procedure_1p( Object target, uint64_t call, uint64_t p1 );
@@ -144,9 +142,9 @@ static inline NUMBER name_code( const char *name )
   return NUMBER_from_integer_register( crc32( name, 0 ) );
 }
 
-static inline Object get_service( const char *name )
+static inline SERVICE get_service( const char *name )
 {
-  return SYSTEM__get_service( system, name_code( name ) ).r;
+  return SYSTEM__get_service( system, name_code( name ) );
 }
 
 static inline void register_service( const char *name, SERVICE service )

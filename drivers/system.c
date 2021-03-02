@@ -348,6 +348,7 @@ NUMBER MapValue__SYSTEM__create_thread( MapValue o, NUMBER code, NUMBER stack_to
 NUMBER MapValue__DRIVER_SYSTEM__physical_address_of( MapValue o, NUMBER va )
 {
   o = o; va = va;
+  for (;;) { asm( "wfi" ); }
   // This call is intercepted by the kernel, since it requires EL1 privileges
   return NUMBER_from_integer_register( unknown_call( DRIVER_SYSTEM_physical_address_of ) ); // FIXME
 }

@@ -44,7 +44,7 @@ echo Core size $CORE_SIZE
 # -mgeneral-regs-only Stops the compiler using floating point registers as temprary storage
 # -ffixed-x18 stops the compiler from using x18, so that it can be used to store the current thread (not trusted by the kernel, of course)
 # I anticipate code with lots of fast locks, so a register is probably a better choice than TLS. ICBW.
-CFLAGS="-I include -mgeneral-regs-only $OPTIMISATION -g -Wall -Wextra -fno-zero-initialized-in-bss -nostartfiles -nostdlib -mtune=cortex-a53 -DCORE_STACK_SIZE=$STACK_SIZE -ffixed-x18 "
+CFLAGS="-I include -mgeneral-regs-only $OPTIMISATION -g -Wall -Wextra -fno-zero-initialized-in-bss -nostartfiles -nostdlib -mtune=cortex-a53 -DCORE_STACK_SIZE=$STACK_SIZE -ffixed-x18 -Wno-unused-function"
 
 KERNEL_ELEMENTS="boot.c el3.c el3_gpio4_debug.c secure_el1.c kernel_translation_tables.c memset.c"
 
@@ -53,7 +53,6 @@ MEMORY_DRIVER=physical_memory_allocator
 SPECIAL_DRIVERS="$SYSTEM_DRIVER $MEMORY_DRIVER"
 
 DRIVERS="pi3gpu show_page"
-DRIVERS="pi3gpu "
 
 echo Building drivers: $DRIVERS
 

@@ -37,3 +37,5 @@ enum {
   System_Service_PhysicalMemoryBlock = 12
 };
 
+enum { DRIVER_SYSTEM_physical_address_of = 0x4a274f85 };
+

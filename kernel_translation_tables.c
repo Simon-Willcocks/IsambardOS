@@ -206,6 +206,9 @@ void switch_to_running_in_high_memory( Core *phys_core, void (*himem_code)( Core
 
 void set_asid( Core *core, uint64_t asid )
 {
-  asm volatile ( "\tmsr TTBR0_EL1, %[table]" :: [table] "r" ((((uint64_t) asid) << 48) | (integer_register) &core->physical_address->core_tt_l1) );
+  if (asid >= 0x10000) {
+    asm ( "svc 0x1" );
+  }
+  asm volatile ( "\tmsr TTBR0_EL1, %[table]" :: [table] "r" ((asid << 48) | (integer_register) &core->physical_address->core_tt_l1) );
 }
 

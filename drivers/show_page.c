@@ -8,17 +8,19 @@
 
 #include "drivers.h"
 
+ISAMBARD_INTERFACE( FRAME_BUFFER )
+#include "interfaces/client/FRAME_BUFFER.h"
+
 DRIVER_INITIALISER( entry );
 
 unsigned long long stack_lock = 0;
-unsigned long long system = 0; // Initialised by _start code
 unsigned long long __attribute__(( aligned( 16 ) )) stack[STACK_SIZE] = { 0x33333333 }; // Just a marker
 
 static const uint32_t width = 1920;
 static const uint32_t height = 1080;
 static const uint32_t vwidth = 1920;
 static const uint32_t vheight = 1080;
-static uint32_t *const mapped_address = (void*) (2 << 20);
+static integer_register const mapped_address = (2 << 20);
 static uint32_t memory_size = width * height * 4;
 
 enum fb_colours {
@@ -180,7 +182,7 @@ static const unsigned char bitmaps[16][8] = {
 
 static inline void set_pixel( uint32_t x, uint32_t y, uint32_t colour )
 {
-  mapped_address[x + y * vwidth] = colour;
+  ((uint32_t * const) mapped_address)[x + y * vwidth] = colour;
 }
 
 static inline void show_nibble( uint32_t x, uint32_t y, uint32_t nibble, uint32_t colour )
@@ -234,29 +236,27 @@ static void show_page( uint32_t *number )
 
 void entry()
 {
-  Object fb_server = 0;
+  SERVICE fb_server = { .r = 0 };
 
   do {
-    fb_server = get_service( 0xfb ); // FIXME crc32 stuff, when services are working...
-    if (fb_server == 0) yield(); // FIXME add timeout to get_service
-  } while (fb_server == 0);
+    fb_server = get_service( "Frame Buffer" );
+    if (fb_server.r == 0) yield(); // FIXME add timeout to get_service
+  } while (fb_server.r == 0);
 
-  Object screen_page = inter_map_call_0p( fb_server, 0xfb );
-  map_physical_block_at( screen_page, (uint64_t) mapped_address );
+  // ASSUMPTION FIXME
+  FRAME_BUFFER fb = FRAME_BUFFER_from_integer_register( fb_server.r );
+
+  PHYSICAL_MEMORY_BLOCK screen_page = FRAME_BUFFER__get_frame_buffer( fb );
+  DRIVER_SYSTEM__map_at( driver_system(), screen_page, NUMBER_from_integer_register( mapped_address ) );
 
   uint64_t cache_line_size;
   asm volatile ( "mrs %[s], DCZID_EL0" : [s] "=r" (cache_line_size) );
   show_qword( 0, 1008, cache_line_size, 0xffffffff );
   show_qword( 160, 1008, 4 << (cache_line_size & 0xf), 0xffffffff );
 
-  inter_map_call_0p( fb_server, 0x5344 );
-
   for (uint64_t n = 0;;n++) {
     show_qword( 0, 1024, n, 0xffffffff );
     asm ( "svc 0" );
-    // The problem doesn't seem to be the changing map to system
-    //inter_map_procedure_0p( system, 99 ); // Blink, and don't change map on interrupt
-    inter_map_procedure_0p( fb_server, 4 ); // Show some debug information
     yield();
   }
 }

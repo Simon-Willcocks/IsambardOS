@@ -39,6 +39,6 @@ asm ( ".section .text"
 
 integer_register unknown_call( integer_register call )
 {
-  for (;;) { asm volatile( "wfi" : : "r" (call) ); }
+  for (;;) { asm volatile( "mov x15, %0\n\twfi" : : "r" (call) ); }
   return 0;
 }

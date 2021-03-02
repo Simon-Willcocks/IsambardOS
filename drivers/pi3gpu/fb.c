@@ -236,10 +236,16 @@ bool screen_mapped = false;
 void map_screen();
 
 // FIXME Only 1080p at the moment.
+// Overscan is affected by config.txt but turning it off results in the display not fitting on the screen.
 // FIXME Combine with tag read/writes, including blocking
 void initialise_display()
 {
+#define overscan 24
+#ifdef overscan
   static uint32_t __attribute__(( aligned( 16 ) )) mailbox_request[33] = {
+#else
+  static uint32_t __attribute__(( aligned( 16 ) )) mailbox_request[26] = {
+#endif
           sizeof( mailbox_request ), 0, // Message buffer size, request
           // Tags: Tag, buffer size, request code, buffer
           0x00040001, // Allocate buffer
@@ -252,8 +258,10 @@ void initialise_display()
           4, 0,    32,
           0x00048006, // Set pixel order
           4, 0,    0,    // 0 = BGR, 1 = RGB
-          0x0004800a, // Set overscan
-          16, 0,   0, 0, 0, 0,    // All zeros
+#ifdef overscan
+          0x0004800a, // Set overscan; this seems to depend on the monitor
+          16, 0,   overscan, overscan, overscan, overscan,
+#endif
           0 }; // End of tags tag
 
   uint64_t mailbox_request_physical_address = DRIVER_SYSTEM__physical_address_of( driver_system(),

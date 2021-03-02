@@ -16,7 +16,9 @@
 
 extern void _start(); // For the PC-relative address of the start of the code
 
+// Too lazy to create a two line include file...
 void initialise_shared_isambard_kernel_tables( Core *core0, int cores );
+void set_asid( Core *core, uint64_t asid );
 
 // w18 contains a thread code, locks may contain two thread codes
 // Valid thread codes are non-zero.
@@ -97,8 +99,6 @@ static void invalidate_all_caches()
 const uint32_t max_physical_memory_gb = 8;
 const uint64_t max_physical_memory = max_physical_memory_gb * (1ull << 30);
 uint64_t memory_allocator_driver_start = max_physical_memory;
-
-static void set_asid( Core *core, uint64_t asid );
 
 // Linker-created symbols are either absolute or relative, *_code_pages,
 // *_data_pages are absolute (see build.sh), *_bin_start, *_bin_end are
@@ -1468,12 +1468,13 @@ static inline thread_switch SEL1_LOWER_AARCH64_SYNC_CODE_may_change_map( Core *c
       // Inter-map call
 
       if (thread->regs[18] != thread_code( thread )) BSOD( __COUNTER__ ); // FIXME Replace with exception
+      if (thread->regs[0] != 2 && thread->regs[1] < 0x100) asm ("wfi");
 
       Interface *interface = interface_from_index( thread->regs[0] );
 
       if (interface->provider == system_map_index
        && interface->handler == System_Service_Map) {
-        if (thread->regs[1] == 999) { // DRIVER_SYSTEM_physical_address_of) 
+        if (thread->regs[1] == DRIVER_SYSTEM_physical_address_of) {
           // This is the simplest and quickest method, and can't be done at el0
           uint64_t pa;
           asm volatile ( "\tAT S1E0W, %[va]"

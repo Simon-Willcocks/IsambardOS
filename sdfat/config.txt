@@ -4,3 +4,5 @@
 
 # Load kernel at address 0
 kernel_old=1
+
+disable_overscan=1
