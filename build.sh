@@ -1,7 +1,7 @@
 #! /bin/bash -
 
 if [ ! -e tools/interfaces -o tools/interfaces.c -nt tools/interfaces ] ; then
-  gcc tools/interfaces.c -o tools/interfaces && ln -sf interfaces tools/server && ln -sf interfaces tools/client &&
+  gcc tools/interfaces.c -o tools/interfaces && ln -sf interfaces tools/server && ln -sf interfaces tools/client
 fi
 
 (
