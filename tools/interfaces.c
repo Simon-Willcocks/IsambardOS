@@ -342,7 +342,7 @@ void export_server_code()
     }
 
     // Only single return values supported.
-    printf( "integer_register c##_call_handler( c o, integer_register call, integer_register p1, integer_register p2, integer_register p3 ); \\\n" );
+    printf( "integer_register c##_call_handler( c o, integer_register call, integer_register p1, integer_register p2, integer_register p3, integer_register p4 ); \\\n" );
     printf( "extern void c##_veneer(); \\\n" ); // Implementation provided by a macro from isambard_client.h
 
     printf( "static inline %s c##_%s_duplicate_to_return( c o ) { %s result; result.r = duplicate_to_return( (integer_register) o.r ); return result; } \\\n", interface_name, interface_name, interface_name );

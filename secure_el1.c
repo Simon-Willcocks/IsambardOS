@@ -361,7 +361,7 @@ void initialise_new_thread( thread_context *thread )
   thread->stack_limit = thread->stack;
   thread->stack_pointer->caller_sp = 0;
   thread->stack_pointer->caller_map = system_map_index;
-  thread->stack_pointer->caller_return_address = 12;
+  thread->stack_pointer->caller_return_address = System_Service_ThreadExit;
 }
 
 static void load_system_map( Core *core )
@@ -1186,7 +1186,7 @@ static inline thread_switch SEL1_LOWER_AARCH64_SYNC_CODE_may_change_map( Core *c
     case 15:
       //led_blink( esr & 15 );
       return result;
-    case 0xfff5: // gate
+    case 0xfff5: // gate (wait_until_woken or wake_thread)
     {
       if (thread->regs[0] == 0) { // Wait for gate
               // TODO Add to timeout list, if thread->regs[1] > 0
