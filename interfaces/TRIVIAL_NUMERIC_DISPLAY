@@ -1,0 +1,9 @@
+
+interface TRIVIAL_NUMERIC_DISPLAY
+show_4bits IN x: NUMBER, y: NUMBER, n: NUMBER, colour: NUMBER
+show_8bits IN x: NUMBER, y: NUMBER, n: NUMBER, colour: NUMBER
+show_32bits IN x: NUMBER, y: NUMBER, n: NUMBER, colour: NUMBER
+show_64bits IN x: NUMBER, y: NUMBER, n: NUMBER, colour: NUMBER
+set_page_to_show IN page: PHYSICAL_MEMORY_BLOCK
+show_page IN colour: NUMBER
+end
