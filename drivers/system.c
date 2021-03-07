@@ -126,7 +126,8 @@ extern uint64_t stack_top;
  
 void thread_exit()
 {
-  asm ("wfi");
+  // Put into a container, for re-starting later...?
+  for (;;) { wait_until_woken(); asm ( "smc 12" ); }
 }
 
 #define INT_STACK_SIZE 64
@@ -265,7 +266,7 @@ interrupts_handled[i]+= 0x10000;
     // FIXME sources = sources & ~(1 << i);
   }
   asm ( "dsb sy" ); // To protect the AXI bus, individual interrupt handlers don't need to bother
-  asm ( "svc 0" ); // Only while debugging FIXME
+  asm ( "svc 0" ); // Only while debugging FIXME REMOVING THIS BREAKS FB! INDEPENDENT OF WHETHER THERE'S A 1ms interrupt
 }
 
 uint64_t core_timer_value()

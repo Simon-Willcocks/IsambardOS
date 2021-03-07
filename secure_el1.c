@@ -361,7 +361,7 @@ void initialise_new_thread( thread_context *thread )
   thread->stack_limit = thread->stack;
   thread->stack_pointer->caller_sp = 0;
   thread->stack_pointer->caller_map = system_map_index;
-  thread->stack_pointer->caller_return_address = 12;
+  thread->stack_pointer->caller_return_address = System_Service_ThreadExit;
 }
 
 static void load_system_map( Core *core )

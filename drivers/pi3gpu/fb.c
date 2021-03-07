@@ -242,9 +242,9 @@ void initialise_display()
 {
 #define overscan 24
 #ifdef overscan
-  static uint32_t __attribute__(( aligned( 16 ) )) mailbox_request[33] = {
+  static uint32_t __attribute__(( aligned( 16 ) )) volatile mailbox_request[33] = {
 #else
-  static uint32_t __attribute__(( aligned( 16 ) )) mailbox_request[26] = {
+  static uint32_t __attribute__(( aligned( 16 ) )) volatile mailbox_request[26] = {
 #endif
           sizeof( mailbox_request ), 0, // Message buffer size, request
           // Tags: Tag, buffer size, request code, buffer
@@ -265,7 +265,7 @@ void initialise_display()
           0 }; // End of tags tag
 
   uint64_t mailbox_request_physical_address = DRIVER_SYSTEM__physical_address_of( driver_system(),
-                NUMBER_from_pointer( &mailbox_request ) ).r;
+                NUMBER_from_pointer( (void*) &mailbox_request ) ).r;
 
   while (devices.mailbox[1].status & 0x80000000) { // Tx full
     yield();
@@ -320,40 +320,7 @@ typedef struct {
   uint64_t lock; // Always first element in an exposed object.
   uint64_t count;
 } fb_service_object;
-#if 0
-int fb_service_handler( fb_service_object *object, uint64_t call )
-{
-  object->count++;
-  switch (call) {
-  case 0xfb: // FIXME
-    while (screen_page == 0) { initialise_display(); }
 
-    Object dup = duplicate_to_return( screen_page );
-
-    return dup;
-
-  case 0x5344: // SD FIXME Not really for this object, but so show_page can execute it
-    {
-      map_screen();
-      extern void initialise_sd_interface();
-      show_word( 100, 20, 0x12341234, White );
-      initialise_sd_interface();
-      return 0;
-    }
-    break;
-
-  default:
-    if (!screen_mapped) {
-      map_screen();
-    }
-
-    show_word( 1700, 16, call, Red );
-    show_word( 1800, 16, object->count, Red );
-    break;
-  }
-  return 1;
-}
-#endif
 STACK_PER_OBJECT( fb_service_object, 64 );
 
 static struct fb_service_object_container __attribute__(( aligned(16) )) fb_service_singleton = { { 0 }, .object = { .lock = 0 } };

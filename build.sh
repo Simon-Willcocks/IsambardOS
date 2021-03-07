@@ -17,7 +17,7 @@ fi
 
 TARGET=aarch64-none-elf-
 
-rm kernel8.dump kernel8.elf sdfat/kernel8.img
+rm -f kernel8.dump kernel8.elf sdfat/kernel8.img built_drivers/*
 
 OPTIMISATION="-Os"
 

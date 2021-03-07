@@ -95,11 +95,9 @@ void entry()
 
 devices.timer.load = (1 << 23) - 1; // Max load value for 23 bit counter
 devices.timer.control |= 0x2a2; // Interrupts enabled, but see bit 0 of Enable_Basic_IRQs
+//devices.interrupts.Enable_Basic_IRQs |= 1; // FIXME
 
   expose_frame_buffer();
   expose_emmc();
-
-  for (;;) { yield(); } // Can I return, yet?
-  // END DEBUG
 }
 

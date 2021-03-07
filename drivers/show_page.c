@@ -256,6 +256,7 @@ void entry()
 
   for (uint64_t n = 0;;n++) {
     show_qword( 0, 1024, n, 0xffffffff );
+    show_page( (void*) 0x1000 );
     asm ( "svc 0" );
     yield();
   }
