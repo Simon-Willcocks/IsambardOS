@@ -12,7 +12,7 @@
 static inline void gpio_set_alternate_function_bits( int gpio, int code )
 {
   int offset = 3 * (gpio % 10);
-  uint32_t *reg = &devices.gpio.GPFSEL[gpio / 10];
+  uint32_t volatile *reg = &devices.gpio.GPFSEL[gpio / 10];
   *reg = (*reg & ~(7 << offset)) | ((code & 7) << offset);
 }
 

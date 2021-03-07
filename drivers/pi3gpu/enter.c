@@ -98,6 +98,6 @@ devices.timer.control |= 0x2a2; // Interrupts enabled, but see bit 0 of Enable_B
 //devices.interrupts.Enable_Basic_IRQs |= 1; // FIXME
 
   expose_frame_buffer();
-  expose_emmc();
+  // expose_emmc();
 }
 

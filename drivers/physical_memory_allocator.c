@@ -66,8 +66,12 @@ void release_free_chunk( chunk *p )
     inter_map_exception( "Corrupt physical memory structure, double free?" );
   }
 
-  // FIXME:
-  // Merge chunks if prev + (1 << prev->log2size) == p
+  if ((char *)p - (char*) prev == (1 << prev->log2size)) {
+    // FIXME:
+    // Merge chunks if prev + (1 << prev->log2size) == p
+    // AND if prev is on an even boundary (i.e. the combined chunk would be
+    // on a valid boundary - e.g. combine chunks 2 & 3, not 3 & 4)
+  }
 
   p->next = *list;
   *list = p;

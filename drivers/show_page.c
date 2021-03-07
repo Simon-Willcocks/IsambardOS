@@ -18,10 +18,9 @@ unsigned long long __attribute__(( aligned( 16 ) )) stack[STACK_SIZE] = { 0x3333
 
 static const uint32_t width = 1920;
 static const uint32_t height = 1080;
-static const uint32_t vwidth = 1920;
-static const uint32_t vheight = 1080;
+static const uint32_t vwidth = width;
+static const uint32_t vheight = height;
 static integer_register const mapped_address = (2 << 20);
-static uint32_t memory_size = width * height * 4;
 
 enum fb_colours {
   Black = 0xff000000,
@@ -182,6 +181,7 @@ static const unsigned char bitmaps[16][8] = {
 
 static inline void set_pixel( uint32_t x, uint32_t y, uint32_t colour )
 {
+  if (y >= vheight) {} // FIXME
   ((uint32_t * const) mapped_address)[x + y * vwidth] = colour;
 }
 
@@ -254,7 +254,8 @@ void entry()
   show_qword( 0, 1008, cache_line_size, 0xffffffff );
   show_qword( 160, 1008, 4 << (cache_line_size & 0xf), 0xffffffff );
 
-  for (uint64_t n = 0;;n++) {
+  static uint64_t volatile n = 0;
+  for (n = 0;;n++) {
     show_qword( 0, 1024, n, 0xffffffff );
     show_page( (void*) 0x1000 );
     asm ( "svc 0" );

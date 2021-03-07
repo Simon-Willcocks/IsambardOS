@@ -315,8 +315,8 @@ void initialise_sd_interface()
 
     if (!powered_up) yield();
   }
-  uint32_t ocr = (response[0] >> 8) & 0xffff;
-  bool sdhc_supported = 0 != (response[0] & (1 << 30));
+  //uint32_t ocr = (response[0] >> 8) & 0xffff;
+  //bool sdhc_supported = 0 != (response[0] & (1 << 30));
 
   show_word( 200, 20, __COUNTER__, 0xffffffff ); asm ( "svc 0" );
   // Card should now be in ready mode

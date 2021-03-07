@@ -346,6 +346,7 @@ void expose_frame_buffer()
 
 PHYSICAL_MEMORY_BLOCK FB__FRAME_BUFFER__get_frame_buffer( FB o )
 {
+  o = o;
   map_screen();
   return PHYSICAL_MEMORY_BLOCK_duplicate_to_return( screen_page );
 }
