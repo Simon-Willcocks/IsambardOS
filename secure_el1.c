@@ -1543,6 +1543,21 @@ static inline thread_switch SEL1_LOWER_AARCH64_SYNC_CODE_may_change_map( Core *c
         BSOD( __COUNTER__ );
       }
       break;
+    case 0b111100: // BRK in Aarch64
+      {
+        // BRK instruction
+        switch (esr & 7) {
+        case 0: BSOD( 5 ); break;
+        case 1: BSOD( 6 ); break;
+        case 2: BSOD( 7 ); break;
+        case 3: BSOD( 8 ); break;
+        case 4: BSOD( 9 ); break;
+        case 5: BSOD( 10 ); break;
+        case 6: BSOD( 11 ); break;
+        case 7: BSOD( 12 ); break;
+	}
+      }
+      break;
     default:
       {
         BSOD( __COUNTER__ );
@@ -1569,7 +1584,7 @@ thread_switch __attribute__(( noinline )) SEL1_LOWER_AARCH64_IRQ_CODE( void *opa
 {
   thread_switch result = { .then = thread, .now = thread };
   Core *core = opaque;
-
+BSOD( __COUNTER__ );
   result.now = core->interrupt_thread;
   if (0 == core->interrupt_thread) BSOD( __COUNTER__ );
 

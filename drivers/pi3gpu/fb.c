@@ -280,6 +280,7 @@ void initialise_display()
   while (devices.mailbox[0].status & 0x40000000) { // Rx empty
     yield();
   }
+  asm ( "svc 0" );
 
   response = devices.mailbox[0].value;
 

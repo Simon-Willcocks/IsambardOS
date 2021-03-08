@@ -127,7 +127,7 @@ extern uint64_t stack_top;
 void thread_exit()
 {
   // Put into a container, for re-starting later...?
-  for (;;) { wait_until_woken(); asm ( "smc 12" ); }
+  for (;;) { wait_until_woken(); asm ( "brk 12" ); }
 }
 
 #define INT_STACK_SIZE 64
@@ -222,6 +222,7 @@ extern struct {
 
 static inline void board_call_interrupt_handlers()
 {
+asm ( "brk 1" );
   asm ( "dsb sy" ); // To protect the AXI bus, individual interrupt handlers don't need to bother
   static uint32_t volatile * const irq_sources = &device_pages.QA7.Core_IRQ_Source[0];
 
@@ -596,8 +597,8 @@ static void start_ms_timer()
   device_pages.QA7.control = (1 << 8); // Timer enable (increment in ones)
 
   // Reasonably close to 1ms ticks: 19200000/500
-  device_pages.QA7.Local_timer_control_and_status = (1 << 29) | (1 << 28) | 19200000/500; // Enable timer, interrupt.
-  device_pages.QA7.Local_timer_write_flags = (1 << 31) | (1 << 30); // Clear IRQ and load timer
+  // device_pages.QA7.Local_timer_control_and_status = (1 << 29) | (1 << 28) | 19200000/500; // Enable timer, interrupt.
+  // device_pages.QA7.Local_timer_write_flags = (1 << 31) | (1 << 30); // Clear IRQ and load timer
   //device_pages.QA7.Local_timer_control_and_status = (1 << 29) | (1 << 28) | ((1 << 28) - 1); // Enable timer, and interrupt. Longest timeout
 
   device_pages.QA7.Core_IRQ_Source[0] = 0x3ff; // (1 << 8);
