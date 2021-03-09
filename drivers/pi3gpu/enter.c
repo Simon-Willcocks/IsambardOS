@@ -27,6 +27,7 @@ typedef struct {
   uint64_t count;
   uint64_t diff;
   uint64_t slowest_response;
+  uint32_t all_ints;
 } gpu_interrupt_object;
 
 STACK_PER_OBJECT( gpu_interrupt_object, 64 );
@@ -48,18 +49,29 @@ void GPU__INTERRUPT_HANDLER__interrupt( GPU o )
 
   uint32_t pending = devices.interrupts.IRQ_basic_pending;
 
+  o.p->all_ints |= pending;
+
+  memory_read_barrier(); // Completed our reads of devices.interrupts
+
   for (int i = 0; i < 32; i++) {
     if (0 != ((1 << i) & pending)) {
       switch (i) {
       case 0:
       {
         o.p->diff = devices.timer.ro_value;
+        memory_read_barrier(); // Completed our reads of devices.timer
         if (o.p->diff < o.p->slowest_response) {
           o.p->slowest_response = o.p->diff;
         }
+        memory_write_barrier(); // About to write to devices.timer
         devices.timer.wo_irq_clear = 1; // Any value should do it.
 
         asm ( "svc 0" ); // FIXME Remove when everything working
+      }
+      break;
+      case 1:
+      {
+        mailbox_interrupt();
       }
       break;
       case 20:
@@ -69,7 +81,7 @@ void GPU__INTERRUPT_HANDLER__interrupt( GPU o )
       break;
       default:
         asm ( "svc 0" );
-        for (;;) { asm ( "svc 2" ); }
+        for (;;) { asm ( "brk 2" ); }
       }
     }
   }
@@ -93,11 +105,30 @@ void entry()
 
   DRIVER_SYSTEM__register_interrupt_handler( driver_system(), obj, NUMBER_from_integer_register( 8 ) );
 
-devices.timer.load = (1 << 23) - 1; // Max load value for 23 bit counter
-devices.timer.control |= 0x2a2; // Interrupts enabled, but see bit 0 of Enable_Basic_IRQs
-//devices.interrupts.Enable_Basic_IRQs |= 1; // FIXME
+  memory_write_barrier(); // About to write to devices.timer
+  devices.timer.load = (1 << 23) - 1; // Max load value for 23 bit counter
+  devices.timer.control |= 0x2a2; // Interrupts enabled, but see bit 0 of Enable_Basic_IRQs
+
+  memory_write_barrier(); // About to write to devices.interrupts
+  devices.interrupts.Enable_Basic_IRQs = 1; // Enable "ARM Timer" IRQ
+  devices.interrupts.Enable_Basic_IRQs = 2; // Enable "ARM Mailbox" IRQ
+  devices.interrupts.Enable_Basic_IRQs = 4; // Enable "Doorbell 0" IRQ
+  devices.interrupts.Enable_Basic_IRQs = 8; // Enable "Doorbell 1" IRQ
+
+  memory_write_barrier(); // About to write to devices.mailbox
+  devices.mailbox[0].config = 1; // ARM_MC_IHAVEDATAIRQEN
 
   expose_frame_buffer();
   // expose_emmc();
+  for (;;) {
+    yield();
+    extern bool screen_mapped;
+    if (screen_mapped) {
+      extern void show_word( int x, int y, uint32_t number, uint32_t colour );
+      show_word( 800, 1000, gpu_interrupt_handler_singleton.object.all_ints, 0xffff00ff );
+      show_word( 1200, 1000, devices.interrupts.Enable_Basic_IRQs, 0xff00ffff );
+      memory_read_barrier(); // Completed our reads of devices.interrupts
+    }
+  }
 }
 

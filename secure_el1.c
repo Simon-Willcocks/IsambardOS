@@ -1138,15 +1138,6 @@ static bool is_real_thread( uint32_t code )
   return true;
 }
 
-uint32_t for_debug_view_esr = 0;
-uint64_t for_debug_view_pc = 0;
-uint32_t for_debug_view_spsr = 0;
-uint32_t for_debug_view_current_map = 0;
-uint32_t for_debug_view_events = 0;
-uint32_t for_debug_view_marker = 0;
-uint64_t for_debug_view_fault_address = 0;
-thread_context for_debug_failed_thread = { 0 };
-
 void *memcpy(void *dest, const void *src, long unsigned int n)
 {
   uint8_t const *s = src;
@@ -1584,7 +1575,7 @@ thread_switch __attribute__(( noinline )) SEL1_LOWER_AARCH64_IRQ_CODE( void *opa
 {
   thread_switch result = { .then = thread, .now = thread };
   Core *core = opaque;
-BSOD( __COUNTER__ );
+
   result.now = core->interrupt_thread;
   if (0 == core->interrupt_thread) BSOD( __COUNTER__ );
 

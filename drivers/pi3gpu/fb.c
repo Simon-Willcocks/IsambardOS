@@ -9,6 +9,57 @@
 
 #include "devices.h"
 
+
+// Suitable for when caches enabled (128x faster?)
+#define LED_BLINK_TIME 0x8000000
+
+static inline void led_off( )
+{
+  memory_write_barrier(); // About to write to devices.gpio
+  devices.gpio.GPCLR[0] = (1 << 4);
+}
+
+static inline void led_on( )
+{
+  memory_write_barrier(); // About to write to devices.gpio
+  devices.gpio.GPSET[0] = (1 << 4);
+}
+
+void led_blink( int n ) {
+  // Count the blinks! Extra short = 0, Long = 5
+
+  if (n == 0) {
+    led_on();
+    for (uint64_t i = 0; i < LED_BLINK_TIME / 4; i++) { asm volatile ( "" ); }
+    led_off();
+    for (uint64_t i = 0; i < LED_BLINK_TIME; i++) { asm volatile ( "" ); }
+  }
+  else {
+    while (n >= 5) {
+      led_on();
+      for (uint64_t i = 0; i < LED_BLINK_TIME * 4; i++) { asm volatile ( "" ); }
+      led_off();
+      for (uint64_t i = 0; i < LED_BLINK_TIME; i++) { asm volatile ( "" ); }
+      n -= 5;
+    }
+    while (n > 0) {
+      led_on();
+      for (uint64_t i = 0; i < LED_BLINK_TIME; i++) { asm volatile ( "" ); }
+      led_off();
+      for (uint64_t i = 0; i < LED_BLINK_TIME; i++) { asm volatile ( "" ); }
+      n --;
+    }
+  }
+  for (uint64_t i = 0; i < 4 * LED_BLINK_TIME; i++) { asm volatile ( "" ); }
+}
+
+void blink_number( uint32_t number )
+{
+  for (int i = 28; i >= 0; i -= 4) {
+    led_blink( (number >> i) & 0xf );
+  }
+}
+
 static uint64_t physical_address;
 static uint32_t *const mapped_address = (void*) (2 << 20);
 static uint32_t memory_size;
@@ -235,6 +286,15 @@ bool screen_mapped = false;
 
 void map_screen();
 
+  uint32_t last_interrupt = 0;
+void mailbox_interrupt()
+{
+  last_interrupt = devices.mailbox[0].config;
+  memory_read_barrier(); // Completed our reads of devices.mailbox
+  memory_write_barrier(); // About to write to devices.timer
+  devices.mailbox[0].config = 0;
+}
+
 // FIXME Only 1080p at the moment.
 // Overscan is affected by config.txt but turning it off results in the display not fitting on the screen.
 // FIXME Combine with tag read/writes, including blocking
@@ -266,15 +326,17 @@ void initialise_display()
 
   uint64_t mailbox_request_physical_address = DRIVER_SYSTEM__physical_address_of( driver_system(),
                 NUMBER_from_pointer( (void*) &mailbox_request ) ).r;
-
+retry:
   while (devices.mailbox[1].status & 0x80000000) { // Tx full
     yield();
   }
 
   // Channel 8: Request from ARM for response by VC
   uint32_t request = 0x8 | (uint32_t) mailbox_request_physical_address;
+
+  memory_write_barrier(); // About to write to devices.mailbox
   devices.mailbox[1].value = request;
-  dsb();
+
   uint32_t response;
 
   while (devices.mailbox[0].status & 0x40000000) { // Rx empty
@@ -283,13 +345,15 @@ void initialise_display()
   asm ( "svc 0" );
 
   response = devices.mailbox[0].value;
+  memory_read_barrier(); // Completed our reads of devices.mailbox
 
   if (response != request) {
-     for (;;) { asm volatile ( "svc 1\n\tsvc 4" ); }
+     for (;;) { led_blink( 2 ); }
   }
 
   if ((mailbox_request[1] & 0x80000000) == 0) {
-    for (;;) { asm volatile ( "svc 1\n\tsvc 6" ); }
+    led_blink( 3 ); goto retry; // This works. :(
+    for (;;) { led_blink( 3 ); }
   }
 
   physical_address = (mailbox_request[5] & 0x3fffffff);
@@ -298,13 +362,6 @@ void initialise_display()
   uint32_t fake_size = (memory_size + (2 << 20)-1) & ~((2ull << 20)-1);
   // Size made to multiple of 2M. Not true, but quick to implement! FIXME when find_and_map_memory is more refined
   screen_page = DRIVER_SYSTEM__get_physical_memory_block( driver_system(), NUMBER_from_integer_register( physical_address ), NUMBER_from_integer_register( fake_size ) );
-
-
-  map_screen();
-  uint32_t *p = mapped_address;
-  for (int i = 0; i < 1024 * 1024; i++) {
-    p[i] = 0xffff3388;
-  }
 }
 
 void map_screen()

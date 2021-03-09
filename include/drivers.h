@@ -152,6 +152,23 @@ static inline void register_service( const char *name, SERVICE service )
   SYSTEM__register_service( system, name_code( name ), service );
 }
 
+/* Accesses to the same peripheral will always arrive and return in-order. It is only when
+ * switching from one peripheral to another that data can arrive out-of-order. The simplest way
+ * to make sure that data is processed in-order is to place a memory barrier instruction at critical
+ * positions in the code. You should place:
+ * * A memory write barrier before the first write to a peripheral.
+ * * A memory read barrier after the last read of a peripheral.
+ * BCM2835 ARM Peripherals p. 7
+*/
+static inline void memory_write_barrier()
+{
+  asm ( "dsb sy" ); // Excessive
+}
+
+static inline void memory_read_barrier()
+{
+  asm ( "dsb sy" ); // Excessive
+}
 
 // Returns number of wake_thread detected before the call returned.
 // 0 Means the thread was paused (this is expected behaviour)
