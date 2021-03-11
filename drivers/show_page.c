@@ -11,8 +11,6 @@
 ISAMBARD_INTERFACE( FRAME_BUFFER )
 #include "interfaces/client/FRAME_BUFFER.h"
 
-DRIVER_INITIALISER( entry );
-
 unsigned long long stack_lock = 0;
 unsigned long long __attribute__(( aligned( 16 ) )) stack[STACK_SIZE] = { 0x33333333 }; // Just a marker
 

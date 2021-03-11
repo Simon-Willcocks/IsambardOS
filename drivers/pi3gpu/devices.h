@@ -1,5 +1,7 @@
 #include "drivers.h"
 
+#define STACK_SIZE 64
+
 extern struct __attribute__(( packed )) {
   uint32_t unused1[0x80]; // ... 0x200
   struct __attribute__(( packed )) {
@@ -78,8 +80,8 @@ extern struct __attribute__(( packed )) {
     uint32_t unused[0xf00 / 4]; // ... 0x1000
   } emmc;
 
-  // The GPIO has 41 registers. All accesses are assumed to be 32-bit.
-  struct {
+  union {
+  struct { // The GPIO has 41 registers. All accesses are assumed to be 32-bit.
     uint32_t GPFSEL[6]; // 0x0000 GPIO Function Select R/W
     uint32_t unused1[1];
     uint32_t GPSET[2]; // 0x001C GPIO Pin Output Set W
@@ -106,8 +108,34 @@ extern struct __attribute__(( packed )) {
     uint32_t GPPUDCLK[2]; // 0x0098 GPIO Pin Pull-up/down Enable Clock R/W
     uint32_t unused12[4];
     uint32_t TEST; // 0x00B0 Test 4 R/W
-    uint32_t unused13[(0x1000 - 0x00b4)/4];
   } gpio;
+  uint32_t res0000[0x40];
+  };
+  union {
+  uint32_t res0100[0x40]; // PL011 USRT
+  struct {
+    uint32_t data;
+    uint32_t RSRECR;
+    uint32_t FR;
+    uint32_t ILPR;
+    uint32_t IBRD;
+    uint32_t LCRH;
+  } PL011_USRT;
+  };
+  uint32_t res0200[0x40];
+  uint32_t res0300[0x40];
+  uint32_t res0400[0x40];
+  uint32_t res0500[0x40];
+  uint32_t res0600[0x40];
+  uint32_t res0700[0x40];
+  uint32_t res0800[0x40];
+  uint32_t res0900[0x40];
+  uint32_t res0a00[0x40];
+  uint32_t res0b00[0x40];
+  uint32_t res0c00[0x40];
+  uint32_t res0d00[0x40];
+  uint32_t res0e00[0x40];
+  uint32_t res0f00[0x40];
 
   struct {
     uint32_t control_status;
@@ -120,6 +148,7 @@ extern struct __attribute__(( packed )) {
 } volatile  __attribute__(( aligned(4096) )) devices;
 
 extern void emmc_interrupt();
+extern void mailbox_interrupt();
 
 extern void expose_emmc();
 extern void expose_frame_buffer();

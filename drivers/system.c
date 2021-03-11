@@ -87,10 +87,9 @@ asm (
     "\n.previous" );
 
 #include "drivers.h"
-#include "kernel.h"
 #include "atomic.h"
 #include "system_services.h"
-
+#include "aarch64_vmsa.h"
 
 // List all the interfaces known to this file, and to those interfaces
 
@@ -126,6 +125,7 @@ extern uint64_t stack_top;
  
 void thread_exit()
 {
+        for (;;) { asm ( "svc 0xfffc" ); }
   // Put into a container, for re-starting later...?
   for (;;) { wait_until_woken(); asm ( "brk 12" ); }
 }
@@ -372,6 +372,7 @@ SERVICE MapValue__SYSTEM__get_service( MapValue o, NUMBER name_crc )
     if (s->name == name_crc.r) {
       return SERVICE_duplicate_to_return( s->service );
     }
+    s++;
   }
   return SERVICE_from_integer_register( 0 );
 }
@@ -623,7 +624,7 @@ void __attribute__(( noreturn )) idle_thread_entry( Object system_interface,
 
     board_initialise();
 
-    inter_map_procedure_2p( memory_manager, 0, free_memory_start, free_memory_end ); // Initialise
+    Isambard_20( memory_manager, 0, free_memory_start, free_memory_end ); // Initialise
 
     board_initialised = true;
 

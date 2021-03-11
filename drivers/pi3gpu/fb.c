@@ -281,19 +281,19 @@ static void show_page( uint32_t *number )
   }
 }
 
+
+ISAMBARD_INTERFACE( GPU_MAILBOX_CHANNEL )
+ISAMBARD_INTERFACE( GPU_MAILBOX )
+
+// Both intimitely related interfaces in the one file
+#include "interfaces/client/GPU_MAILBOX.h"
+
+GPU_MAILBOX_CHANNEL gpu_mailbox = {};
+
 PHYSICAL_MEMORY_BLOCK screen_page = { .r = 0 };
 bool screen_mapped = false;
 
 void map_screen();
-
-  uint32_t last_interrupt = 0;
-void mailbox_interrupt()
-{
-  last_interrupt = devices.mailbox[0].config;
-  memory_read_barrier(); // Completed our reads of devices.mailbox
-  memory_write_barrier(); // About to write to devices.timer
-  devices.mailbox[0].config = 0;
-}
 
 // FIXME Only 1080p at the moment.
 // Overscan is affected by config.txt but turning it off results in the display not fitting on the screen.
@@ -324,35 +324,23 @@ void initialise_display()
 #endif
           0 }; // End of tags tag
 
-  uint64_t mailbox_request_physical_address = DRIVER_SYSTEM__physical_address_of( driver_system(),
-                NUMBER_from_pointer( (void*) &mailbox_request ) ).r;
-retry:
-  while (devices.mailbox[1].status & 0x80000000) { // Tx full
-    yield();
-  }
+  NUMBER mailbox_request_PA = DRIVER_SYSTEM__physical_address_of( driver_system(),
+                NUMBER_from_pointer( (void*) &mailbox_request ) );
 
-  // Channel 8: Request from ARM for response by VC
-  uint32_t request = 0x8 | (uint32_t) mailbox_request_physical_address;
+  NUMBER response;
 
-  memory_write_barrier(); // About to write to devices.mailbox
-  devices.mailbox[1].value = request;
+retry: 
+  response = GPU_MAILBOX_CHANNEL__send_for_response( gpu_mailbox, mailbox_request_PA );
 
-  uint32_t response;
-
-  while (devices.mailbox[0].status & 0x40000000) { // Rx empty
-    yield();
-  }
   asm ( "svc 0" );
 
-  response = devices.mailbox[0].value;
-  memory_read_barrier(); // Completed our reads of devices.mailbox
-
-  if (response != request) {
+  if (response.r != mailbox_request_PA.r) {
      for (;;) { led_blink( 2 ); }
   }
 
   if ((mailbox_request[1] & 0x80000000) == 0) {
-    led_blink( 3 ); goto retry; // This works. :(
+    //led_blink( 3 );
+    goto retry; // This works. :(
     for (;;) { led_blink( 3 ); }
   }
 
@@ -397,6 +385,9 @@ ISAMBARD_PROVIDER_UNLOCKED_PER_OBJECT_STACK( FB )
 
 void expose_frame_buffer()
 {
+  GPU_MAILBOX factory = GPU_MAILBOX_from_integer_register( get_service( "Pi GPU Mailboxes" ).r );
+  gpu_mailbox = GPU_MAILBOX__claim_channel( factory, NUMBER_from_integer_register( 8 ) );
+
   FB fb = { .p = &fb_service_singleton.object };
   SERVICE obj = FB_SERVICE_to_pass_to( system.r, fb );
   register_service( "Frame Buffer", obj );

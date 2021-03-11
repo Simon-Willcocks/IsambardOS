@@ -28,23 +28,10 @@ ${TARGET}objdump --disassemble-all /tmp/$$.o -x | sed -n 's/^.*bss[^0]*0*\(.*\) 
 rm /tmp/$$.o
 }
 
-if [ -z "$STACK_SIZE" ] ; then
-  echo -n Calculating appropriate stack size...
-  MIN_STACK_SIZE=400
-  CORE_SIZE=$( core_size $MIN_STACK_SIZE )
-  STACK_SIZE=$(( $MIN_STACK_SIZE + ( 0x1000 - $CORE_SIZE & 0xfff ) / 8 ))
-fi
-
-CORE_SIZE=$( core_size $STACK_SIZE )
-test 0 -eq $(( 0xfff & $CORE_SIZE )) || ( echo Invalid stack size: $STACK_SIZE ; exit 1 )
-echo done: $STACK_SIZE
-
-echo Core size $CORE_SIZE
-
 # -mgeneral-regs-only Stops the compiler using floating point registers as temprary storage
 # -ffixed-x18 stops the compiler from using x18, so that it can be used to store the current thread (not trusted by the kernel, of course)
 # I anticipate code with lots of fast locks, so a register is probably a better choice than TLS. ICBW.
-CFLAGS="-I include -mgeneral-regs-only $OPTIMISATION -g -Wall -Wextra -fno-zero-initialized-in-bss -nostartfiles -nostdlib -mtune=cortex-a53 -DCORE_STACK_SIZE=$STACK_SIZE -ffixed-x18 -Wno-unused-function"
+CFLAGS="-I include -mgeneral-regs-only $OPTIMISATION -g -Wall -Wextra -fno-zero-initialized-in-bss -nostartfiles -nostdlib -mtune=cortex-a53 -ffixed-x18 -Wno-unused-function"
 
 KERNEL_ELEMENTS="boot.c el3.c el3_gpio4_debug.c secure_el1.c kernel_translation_tables.c memset.c"
 
@@ -63,12 +50,20 @@ symbol() {
 }
 
 build_driver() {
-  # Each driver's code and data will be padded to a 4k boundary, the .bin file will be a multiple of 4k in size.
-  # Parameters: ld.script for build (used to locate code other than at 0), driver name, symbols to keep
-  if [ -d drivers/"$2" ] ; then
-    ${TARGET}gcc -g -DCORE_STACK_SIZE=$STACK_SIZE -I drivers/"$2" drivers/libdrivers.c drivers/"$2"/*.c -o built_drivers/"$2".elf -T $1 $CFLAGS
+  # Each driver's code and data is padded to a 4k boundary, the .bin file will be a multiple of 4k in size.
+  # Parameters: ld.script for build (used to locate code other than at 0), driver name
+
+  # The system driver has its own entry protocol, disable the libdrivers.c init code
+  if [ "$2" = "$SYSTEM_DRIVER" ] ; then
+    SYSTEM_DEFINE="-DSYSTEM_DRIVER"
   else
-    ${TARGET}gcc -g -DCORE_STACK_SIZE=$STACK_SIZE drivers/libdrivers.c drivers/"$2".c -o built_drivers/"$2".elf -T $1 $CFLAGS
+    SYSTEM_DEFINE=""
+  fi
+
+  if [ -d drivers/"$2" ] ; then
+    ${TARGET}gcc -g -I drivers/"$2" drivers/libdrivers.c drivers/"$2"/*.c -o built_drivers/"$2".elf -T $1 $CFLAGS
+  else
+    ${TARGET}gcc -g drivers/libdrivers.c drivers/"$2".c -o built_drivers/"$2".elf -T $1 $CFLAGS $SYSTEM_DEFINE
   fi &&
   # elf object file to binary, runnable code and data
   ${TARGET}objcopy -O binary built_drivers/"$2".elf built_drivers/"$2".bin --gap-fill 42 --pad-to $(( $( symbol built_drivers/"$2".elf pad_to_here ) )) &&
@@ -119,7 +114,20 @@ done
 echo '};'
 ) > built_drivers/drivers_info.h
 
-${TARGET}gcc -o kernel8.elf -T ld.script -I built_drivers/ $KERNEL_ELEMENTS built_drivers/*.o $CFLAGS -DCORE_SIZE=\"$CORE_SIZE\" &&
+if [ -z "$STACK_SIZE" ] ; then
+  echo -n Calculating appropriate stack size...
+  MIN_STACK_SIZE=400
+  CORE_SIZE=$( core_size $MIN_STACK_SIZE )
+  STACK_SIZE=$(( $MIN_STACK_SIZE + ( 0x1000 - $CORE_SIZE & 0xfff ) / 8 ))
+fi
+
+CORE_SIZE=$( core_size $STACK_SIZE )
+test 0 -eq $(( 0xfff & $CORE_SIZE )) || ( echo Invalid stack size: $STACK_SIZE ; exit 1 )
+echo done: $STACK_SIZE
+
+echo Core size $CORE_SIZE
+
+${TARGET}gcc -o kernel8.elf -T ld.script -I built_drivers/ $KERNEL_ELEMENTS built_drivers/*.o $CFLAGS -DCORE_SIZE=\"$CORE_SIZE\" -DCORE_STACK_SIZE=$STACK_SIZE &&
 
 ${TARGET}objcopy kernel8.elf sdfat/kernel8.img -O binary &&
 ${TARGET}objdump -x --source --disassemble-all kernel8.elf > kernel8.dump &&

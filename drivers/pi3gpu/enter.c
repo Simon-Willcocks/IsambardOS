@@ -17,8 +17,6 @@ void sleep_ms( uint64_t ms ) // FIXME
   }
 }
 
-DRIVER_INITIALISER( entry );
-
 unsigned long long stack_lock = 0;
 unsigned long long __attribute__(( aligned( 16 ) )) stack[STACK_SIZE] = { 0x33333333 }; // Just a marker
 
@@ -112,13 +110,10 @@ void entry()
   memory_write_barrier(); // About to write to devices.interrupts
   devices.interrupts.Enable_Basic_IRQs = 1; // Enable "ARM Timer" IRQ
   devices.interrupts.Enable_Basic_IRQs = 2; // Enable "ARM Mailbox" IRQ
-  devices.interrupts.Enable_Basic_IRQs = 4; // Enable "Doorbell 0" IRQ
-  devices.interrupts.Enable_Basic_IRQs = 8; // Enable "Doorbell 1" IRQ
 
-  memory_write_barrier(); // About to write to devices.mailbox
-  devices.mailbox[0].config = 1; // ARM_MC_IHAVEDATAIRQEN
-
+  expose_gpu_mailbox();
   expose_frame_buffer();
+  /*
   // expose_emmc();
   for (;;) {
     yield();
@@ -130,5 +125,6 @@ void entry()
       memory_read_barrier(); // Completed our reads of devices.interrupts
     }
   }
+  */
 }
 

@@ -10,9 +10,13 @@
 #include "kernel.h"
 #include "system_services.h"
 #include "atomic.h"
-#include "drivers_info.h"
 
-// build.sh generated, for the two standard drivers.
+static const interface_index system_map_index = 1;
+static const interface_index memory_allocator_map_index = 2;
+static const unsigned number_of_system_maps = 2;
+
+// build.sh generated:
+#include "drivers_info.h"
 
 extern void _start(); // For the PC-relative address of the start of the code
 
