@@ -1,0 +1,8 @@
+
+interface GPU_MAILBOX
+claim_channel IN channel: NUMBER OUT interface: GPU_MAILBOX_CHANNEL
+end
+
+interface GPU_MAILBOX_CHANNEL
+send_for_response IN request: NUMBER OUT response: NUMBER
+end

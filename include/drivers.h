@@ -68,50 +68,7 @@ extern integer_register __attribute__(( aligned( 16 ) )) stack[]; // Sized in on
 
 static inline DRIVER_SYSTEM driver_system() { return DRIVER_SYSTEM_from_integer_register( system.r ); }
 
-// Busy-wait for lock to be zero
-// Write the (non-zero) address of lock to lock to lock the stack
-// Ensure the lock is mapped, first (not really interrupt-safe) FIXME
-#define LOCK_DRIVER_STACK( fn )       \
-    "\n\tadr  x9, stack_lock"   \
-  "\n0:\tldxr x10, [x9]"        \
-    "\n\tcbnz x10, 0b"          \
-    "\n\tstxr w10, x9, [x9]"    \
-    "\n\tcbnz x10, 0b"          \
-    "\n\tadr  x10, stack" \
-    "\n\tadd sp, x10, #8*"STACK_SIZE_STRING( STACK_SIZE ) \
-    "\n\tbl "#fn \
-    /* Unlock stack */ \
-    "\n\tadr  x9, stack_lock" \
-    "\n\tstr xzr, [x9]" \
-    "\n\tsvc 0xfffd" \
-    "\n"#fn"_throw_unnamed_exception:" \
-    "\n\tadr  x9, stack_lock" \
-    "\n\tstr xzr, [x9]" \
-    "\n\tsvc 0xfffb" // FIXME
-
-#define DRIVER_INITIALISER( entry ) \
-asm ( ".section .init" \
-    "\n.global _start" \
-    "\n.type _start, %function" \
-    "\n_start:" \
-    "\n\tadr  x9, system" \
-    "\n\tstr  x0, [x9]" \
-    LOCK_DRIVER_STACK( entry ) \
-    "\n.previous" )
-
-
 extern bool yield();
-extern void inter_map_procedure_0p( Object target, uint64_t call );
-extern void inter_map_procedure_1p( Object target, uint64_t call, uint64_t p1 );
-extern void inter_map_procedure_2p( Object target, uint64_t call, uint64_t p1, uint64_t p2 );
-extern void inter_map_procedure_3p( Object target, uint64_t call, uint64_t p1, uint64_t p2, uint64_t p3 );
-extern Object inter_map_call_returning_object_0p( Object target, uint64_t call );
-extern Object inter_map_call_returning_object_1p( Object target, uint64_t call, uint64_t p1 );
-extern Object inter_map_call_returning_object_2p( Object target, uint64_t call, uint64_t p1, uint64_t p2 );
-extern uint64_t inter_map_call_0p( Object target, uint64_t call );
-extern uint64_t inter_map_call_1p( Object target, uint64_t call, uint64_t p1 );
-extern uint64_t inter_map_call_2p( Object target, uint64_t call, uint64_t p1, uint64_t p2 );
-extern uint64_t inter_map_call_3p( Object target, uint64_t call, uint64_t p1, uint64_t p2, uint64_t p3 );
 
 static inline integer_register create_thread( void *code, uint64_t *stack_top )
 {
@@ -152,20 +109,32 @@ static inline void register_service( const char *name, SERVICE service )
   SYSTEM__register_service( system, name_code( name ), service );
 }
 
+/* Accesses to the same peripheral will always arrive and return in-order. It is only when
+ * switching from one peripheral to another that data can arrive out-of-order. The simplest way
+ * to make sure that data is processed in-order is to place a memory barrier instruction at critical
+ * positions in the code. You should place:
+ * * A memory write barrier before the first write to a peripheral.
+ * * A memory read barrier after the last read of a peripheral.
+ * BCM2835 ARM Peripherals p. 7
+*/
+static inline void memory_write_barrier()
+{
+  asm ( "dsb sy" ); // Excessive
+}
+
+static inline void memory_read_barrier()
+{
+  asm ( "dsb sy" ); // Excessive
+}
 
 // Returns number of wake_thread detected before the call returned.
 // 0 Means the thread was paused (this is expected behaviour)
 // 1 Means the wake_thread occurred before wait_until_woken was called.
 // >1 Means multiple wake_threads occurred
 // TODO Add timeout parameter (return -ve on timeout)
+extern integer_register wake_thread( uint32_t thread );
+
 static inline uint64_t wait_until_woken()
 {
-  uint64_t result;
-  asm volatile ( "mov x0, #0\n\tsvc 0xfff5" : [res] "=r" (result) : : );
-  return result;
-}
-
-static inline void wake_thread( uint32_t thread )
-{
-  asm volatile ( "svc 0xfff5" : : "r" (thread) );
+  return wake_thread( 0 );
 }

@@ -9,6 +9,57 @@
 
 #include "devices.h"
 
+
+// Suitable for when caches enabled (128x faster?)
+#define LED_BLINK_TIME 0x8000000
+
+static inline void led_off( )
+{
+  memory_write_barrier(); // About to write to devices.gpio
+  devices.gpio.GPCLR[0] = (1 << 4);
+}
+
+static inline void led_on( )
+{
+  memory_write_barrier(); // About to write to devices.gpio
+  devices.gpio.GPSET[0] = (1 << 4);
+}
+
+void led_blink( int n ) {
+  // Count the blinks! Extra short = 0, Long = 5
+
+  if (n == 0) {
+    led_on();
+    for (uint64_t i = 0; i < LED_BLINK_TIME / 4; i++) { asm volatile ( "" ); }
+    led_off();
+    for (uint64_t i = 0; i < LED_BLINK_TIME; i++) { asm volatile ( "" ); }
+  }
+  else {
+    while (n >= 5) {
+      led_on();
+      for (uint64_t i = 0; i < LED_BLINK_TIME * 4; i++) { asm volatile ( "" ); }
+      led_off();
+      for (uint64_t i = 0; i < LED_BLINK_TIME; i++) { asm volatile ( "" ); }
+      n -= 5;
+    }
+    while (n > 0) {
+      led_on();
+      for (uint64_t i = 0; i < LED_BLINK_TIME; i++) { asm volatile ( "" ); }
+      led_off();
+      for (uint64_t i = 0; i < LED_BLINK_TIME; i++) { asm volatile ( "" ); }
+      n --;
+    }
+  }
+  for (uint64_t i = 0; i < 4 * LED_BLINK_TIME; i++) { asm volatile ( "" ); }
+}
+
+void blink_number( uint32_t number )
+{
+  for (int i = 28; i >= 0; i -= 4) {
+    led_blink( (number >> i) & 0xf );
+  }
+}
+
 static uint64_t physical_address;
 static uint32_t *const mapped_address = (void*) (2 << 20);
 static uint32_t memory_size;
@@ -230,6 +281,15 @@ static void show_page( uint32_t *number )
   }
 }
 
+
+ISAMBARD_INTERFACE( GPU_MAILBOX_CHANNEL )
+ISAMBARD_INTERFACE( GPU_MAILBOX )
+
+// Both intimitely related interfaces in the one file
+#include "interfaces/client/GPU_MAILBOX.h"
+
+GPU_MAILBOX_CHANNEL gpu_mailbox = {};
+
 PHYSICAL_MEMORY_BLOCK screen_page = { .r = 0 };
 bool screen_mapped = false;
 
@@ -242,9 +302,9 @@ void initialise_display()
 {
 #define overscan 24
 #ifdef overscan
-  static uint32_t __attribute__(( aligned( 16 ) )) mailbox_request[33] = {
+  static uint32_t __attribute__(( aligned( 16 ) )) volatile mailbox_request[33] = {
 #else
-  static uint32_t __attribute__(( aligned( 16 ) )) mailbox_request[26] = {
+  static uint32_t __attribute__(( aligned( 16 ) )) volatile mailbox_request[26] = {
 #endif
           sizeof( mailbox_request ), 0, // Message buffer size, request
           // Tags: Tag, buffer size, request code, buffer
@@ -264,31 +324,24 @@ void initialise_display()
 #endif
           0 }; // End of tags tag
 
-  uint64_t mailbox_request_physical_address = DRIVER_SYSTEM__physical_address_of( driver_system(),
-                NUMBER_from_pointer( &mailbox_request ) ).r;
+  NUMBER mailbox_request_PA = DRIVER_SYSTEM__physical_address_of( driver_system(),
+                NUMBER_from_pointer( (void*) &mailbox_request ) );
 
-  while (devices.mailbox[1].status & 0x80000000) { // Tx full
-    yield();
-  }
+  NUMBER response;
 
-  // Channel 8: Request from ARM for response by VC
-  uint32_t request = 0x8 | (uint32_t) mailbox_request_physical_address;
-  devices.mailbox[1].value = request;
-  dsb();
-  uint32_t response;
+retry: 
+  response = GPU_MAILBOX_CHANNEL__send_for_response( gpu_mailbox, mailbox_request_PA );
 
-  while (devices.mailbox[0].status & 0x40000000) { // Rx empty
-    yield();
-  }
+  asm ( "svc 0" );
 
-  response = devices.mailbox[0].value;
-
-  if (response != request) {
-     for (;;) { asm volatile ( "svc 1\n\tsvc 4" ); }
+  if (response.r != mailbox_request_PA.r) {
+     for (;;) { led_blink( 2 ); }
   }
 
   if ((mailbox_request[1] & 0x80000000) == 0) {
-    for (;;) { asm volatile ( "svc 1\n\tsvc 6" ); }
+    //led_blink( 3 );
+    goto retry; // This works. :(
+    for (;;) { led_blink( 3 ); }
   }
 
   physical_address = (mailbox_request[5] & 0x3fffffff);
@@ -297,13 +350,6 @@ void initialise_display()
   uint32_t fake_size = (memory_size + (2 << 20)-1) & ~((2ull << 20)-1);
   // Size made to multiple of 2M. Not true, but quick to implement! FIXME when find_and_map_memory is more refined
   screen_page = DRIVER_SYSTEM__get_physical_memory_block( driver_system(), NUMBER_from_integer_register( physical_address ), NUMBER_from_integer_register( fake_size ) );
-
-
-  map_screen();
-  uint32_t *p = mapped_address;
-  for (int i = 0; i < 1024 * 1024; i++) {
-    p[i] = 0xffff3388;
-  }
 }
 
 void map_screen()
@@ -320,40 +366,7 @@ typedef struct {
   uint64_t lock; // Always first element in an exposed object.
   uint64_t count;
 } fb_service_object;
-#if 0
-int fb_service_handler( fb_service_object *object, uint64_t call )
-{
-  object->count++;
-  switch (call) {
-  case 0xfb: // FIXME
-    while (screen_page == 0) { initialise_display(); }
 
-    Object dup = duplicate_to_return( screen_page );
-
-    return dup;
-
-  case 0x5344: // SD FIXME Not really for this object, but so show_page can execute it
-    {
-      map_screen();
-      extern void initialise_sd_interface();
-      show_word( 100, 20, 0x12341234, White );
-      initialise_sd_interface();
-      return 0;
-    }
-    break;
-
-  default:
-    if (!screen_mapped) {
-      map_screen();
-    }
-
-    show_word( 1700, 16, call, Red );
-    show_word( 1800, 16, object->count, Red );
-    break;
-  }
-  return 1;
-}
-#endif
 STACK_PER_OBJECT( fb_service_object, 64 );
 
 static struct fb_service_object_container __attribute__(( aligned(16) )) fb_service_singleton = { { 0 }, .object = { .lock = 0 } };
@@ -372,6 +385,9 @@ ISAMBARD_PROVIDER_UNLOCKED_PER_OBJECT_STACK( FB )
 
 void expose_frame_buffer()
 {
+  GPU_MAILBOX factory = GPU_MAILBOX_from_integer_register( get_service( "Pi GPU Mailboxes" ).r );
+  gpu_mailbox = GPU_MAILBOX__claim_channel( factory, NUMBER_from_integer_register( 8 ) );
+
   FB fb = { .p = &fb_service_singleton.object };
   SERVICE obj = FB_SERVICE_to_pass_to( system.r, fb );
   register_service( "Frame Buffer", obj );
@@ -379,6 +395,7 @@ void expose_frame_buffer()
 
 PHYSICAL_MEMORY_BLOCK FB__FRAME_BUFFER__get_frame_buffer( FB o )
 {
+  o = o;
   map_screen();
   return PHYSICAL_MEMORY_BLOCK_duplicate_to_return( screen_page );
 }

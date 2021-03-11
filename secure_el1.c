@@ -10,9 +10,13 @@
 #include "kernel.h"
 #include "system_services.h"
 #include "atomic.h"
-#include "drivers_info.h"
 
-// build.sh generated, for the two standard drivers.
+static const interface_index system_map_index = 1;
+static const interface_index memory_allocator_map_index = 2;
+static const unsigned number_of_system_maps = 2;
+
+// build.sh generated:
+#include "drivers_info.h"
 
 extern void _start(); // For the PC-relative address of the start of the code
 
@@ -1138,15 +1142,6 @@ static bool is_real_thread( uint32_t code )
   return true;
 }
 
-uint32_t for_debug_view_esr = 0;
-uint64_t for_debug_view_pc = 0;
-uint32_t for_debug_view_spsr = 0;
-uint32_t for_debug_view_current_map = 0;
-uint32_t for_debug_view_events = 0;
-uint32_t for_debug_view_marker = 0;
-uint64_t for_debug_view_fault_address = 0;
-thread_context for_debug_failed_thread = { 0 };
-
 void *memcpy(void *dest, const void *src, long unsigned int n)
 {
   uint8_t const *s = src;
@@ -1541,6 +1536,21 @@ static inline thread_switch SEL1_LOWER_AARCH64_SYNC_CODE_may_change_map( Core *c
         // Register access at EL0, e.g. CNTP_TVAL_EL0
         // We don't do that yet. Perhaps it can be turned on in SCTLR_EL1?
         BSOD( __COUNTER__ );
+      }
+      break;
+    case 0b111100: // BRK in Aarch64
+      {
+        // BRK instruction
+        switch (esr & 7) {
+        case 0: BSOD( 5 ); break;
+        case 1: BSOD( 6 ); break;
+        case 2: BSOD( 7 ); break;
+        case 3: BSOD( 8 ); break;
+        case 4: BSOD( 9 ); break;
+        case 5: BSOD( 10 ); break;
+        case 6: BSOD( 11 ); break;
+        case 7: BSOD( 12 ); break;
+	}
       }
       break;
     default:

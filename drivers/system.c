@@ -82,15 +82,14 @@ asm (
     "\n\tsvc 0xfffa" // Need kernel help to claim
     "\n\tb 3b"
 
-    "\n0: svc 1" // TODO Throw an exception, recursion not allowed in this case
+    "\n0: brk 1" // TODO Throw an exception, recursion not allowed in this case
     "\n\tb 0b"
     "\n.previous" );
 
 #include "drivers.h"
-#include "kernel.h"
 #include "atomic.h"
 #include "system_services.h"
-
+#include "aarch64_vmsa.h"
 
 // List all the interfaces known to this file, and to those interfaces
 
@@ -126,7 +125,9 @@ extern uint64_t stack_top;
  
 void thread_exit()
 {
-  asm ("wfi");
+        for (;;) { asm ( "svc 0xfffc" ); }
+  // Put into a container, for re-starting later...?
+  for (;;) { wait_until_woken(); asm ( "brk 12" ); }
 }
 
 #define INT_STACK_SIZE 64
@@ -164,7 +165,7 @@ static INTERRUPT_HANDLER interrupt_handlers[12] = { { .r = 0 } };
 void board_remove_interrupt_handler( INTERRUPT_HANDLER handler, unsigned interrupt )
 {
   if (interrupt_handlers[interrupt].r != handler.r) {
-    for (;;) { asm volatile ( "svc 1\n\tsvc 3" ); }
+    for (;;) { asm volatile ( "svc 1\n\tbrk 3" ); }
   }
   interrupt_handlers[interrupt].r = 0;
   // FIXME release handler object
@@ -174,17 +175,18 @@ void board_register_interrupt_handler( INTERRUPT_HANDLER handler, unsigned inter
 {
   if (interrupt >= 12) {
     // Out of range
-    for (;;) { asm volatile ( "svc 1\n\tsvc 3" ); }
+    for (;;) { asm volatile ( "svc 1\n\tbrk 3" ); }
   }
   if (interrupt_handlers[interrupt].r != 0) {
     // Already claimed
-    for (;;) { asm volatile ( "svc 1\n\tsvc 4" ); }
+    for (;;) { asm volatile ( "svc 1\n\tbrk 4" ); }
   }
   interrupt_handlers[interrupt] = handler;
   // TODO Fix the caller map to a particular core
   // In other boards, it would be reasonable to enable the relevant interrupt at this point
 }
 
+// We have one device, in this driver
 extern struct {
   union {
     struct {
@@ -221,9 +223,6 @@ extern struct {
 
 static inline void board_call_interrupt_handlers()
 {
-  asm ( "dsb sy" ); // To protect the AXI bus, individual interrupt handlers don't need to bother
-  static uint32_t volatile * const irq_sources = &device_pages.QA7.Core_IRQ_Source[0];
-
   static uint64_t volatile interrupts_count = 0;
   static uint64_t volatile unidentified_interrupts_count = 0;
   interrupts_count++;
@@ -231,15 +230,15 @@ static inline void board_call_interrupt_handlers()
 
   // This is the first level of Pi interrupts, the GPU interrupt may happen for many reasons,
   // dealt with in the driver.
-  dsb();
-  uint32_t sources = irq_sources[this_core.number];
+
+  uint32_t sources = device_pages.QA7.Core_IRQ_Source[this_core.number];
 
   static uint32_t interrupts_handled[12] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 };
 
   if (sources == 0) {
 interrupts_handled[0]+= 0x100000;
     dsb();
-    sources = irq_sources[this_core.number];
+    sources = device_pages.QA7.Core_IRQ_Source[this_core.number];
     if (sources == 0) {
       this_core.unidentified_interrupts_count++;
       unidentified_interrupts_count++;
@@ -247,9 +246,12 @@ interrupts_handled[0]+= 0x100000;
     }
   }
 
+  memory_read_barrier(); // Completed our reads of device_pages.QA7
+
   for (int i = 0; sources != 0 && i < 12; i++) {
     if (0 != ((1 << i) & sources)) {
       if (i == 11) {
+        memory_write_barrier(); // About to write to device_pages.QA7
         device_pages.QA7.Local_timer_write_flags = (1 << 31);
 	ms_ticks ++;
       }
@@ -262,16 +264,15 @@ interrupts_handled[i]+= 0x10000;
       }
     }
 
-    // FIXME sources = sources & ~(1 << i);
+    sources = sources & ~(1 << i);
   }
-  asm ( "dsb sy" ); // To protect the AXI bus, individual interrupt handlers don't need to bother
-  asm ( "svc 0" ); // Only while debugging FIXME
 }
 
 uint64_t core_timer_value()
 {
   uint64_t result = device_pages.QA7.Core_timer_access_LS_32_bits;
   result |= ((uint64_t) device_pages.QA7.Core_timer_access_MS_32_bits) << 32;
+  memory_read_barrier(); // Completed our reads of device_pages.QA7
   return result;
 }
 
@@ -281,6 +282,8 @@ void board_initialise()
 {
   make_special_request( Isambard_System_Service_Add_Device_Page, 0x40000000, (uint64_t) &device_pages.QA7 );
   initial_interrupts_routing = device_pages.QA7.GPU_interrupts_routing;
+  memory_read_barrier(); // Completed our reads of device_pages.QA7
+  memory_write_barrier(); // About to write to device_pages.QA7
   device_pages.QA7.GPU_interrupts_routing = 0; // IRQ and FIQ to Core 0
 }
 
@@ -369,6 +372,7 @@ SERVICE MapValue__SYSTEM__get_service( MapValue o, NUMBER name_crc )
     if (s->name == name_crc.r) {
       return SERVICE_duplicate_to_return( s->service );
     }
+    s++;
   }
   return SERVICE_from_integer_register( 0 );
 }
@@ -506,7 +510,7 @@ uint64_t map_service_c_code( uint64_t o, uint32_t call, uint64_t p1, uint64_t p2
     }
     break;
   }
-  for (;;) { asm volatile ( "svc 1\n\tsvc 2" ); }
+  for (;;) { asm volatile ( "svc 1\n\tbrk 2" ); }
 }
 #endif
 
@@ -595,9 +599,9 @@ static void start_ms_timer()
   device_pages.QA7.control = (1 << 8); // Timer enable (increment in ones)
 
   // Reasonably close to 1ms ticks: 19200000/500
-  device_pages.QA7.Local_timer_control_and_status = (1 << 29) | (1 << 28) | 19200000/500; // Enable timer, interrupt.
+  // device_pages.QA7.Local_timer_control_and_status = (1 << 29) | (1 << 28) | 19200000/500; // Enable timer, interrupt.
   device_pages.QA7.Local_timer_write_flags = (1 << 31) | (1 << 30); // Clear IRQ and load timer
-  //device_pages.QA7.Local_timer_control_and_status = (1 << 29) | (1 << 28) | ((1 << 28) - 1); // Enable timer, and interrupt. Longest timeout
+  device_pages.QA7.Local_timer_control_and_status = (1 << 29) | (1 << 28) | ((1 << 28) - 1); // Enable timer, and interrupt. Longest timeout
 
   device_pages.QA7.Core_IRQ_Source[0] = 0x3ff; // (1 << 8);
   device_pages.QA7.Core_IRQ_Source[1] = 0x3ff; // (1 << 8);
@@ -620,7 +624,7 @@ void __attribute__(( noreturn )) idle_thread_entry( Object system_interface,
 
     board_initialise();
 
-    inter_map_procedure_2p( memory_manager, 0, free_memory_start, free_memory_end ); // Initialise
+    Isambard_20( memory_manager, 0, free_memory_start, free_memory_end ); // Initialise
 
     board_initialised = true;
 
@@ -635,24 +639,17 @@ void __attribute__(( noreturn )) idle_thread_entry( Object system_interface,
   create_interrupt_handler_thread();
 
   if (core_number == 0) {
-    start_ms_timer();
+    // Other timers will be available, but 1ms seems reasonable for timing events,
+    // considering a 2MHz computer used 10ms ticks, in 1982.
+    //start_ms_timer();
   }
 
   for (;;) {
-    uint64_t time = core_timer_value();
-    if (time == 0) {
-      asm volatile ( "svc 3" );
-    }
-//    uint64_t othertime;
-//    asm volatile( "mrs %[ot], CNTPCT_EL0" : [ot] "=r" (othertime) );
-    for (int i = 0; i < 100000; i++) {
-      if (!yield())
-      {
-        //asm volatile ( "svc 2" );
-      }
-    }
-    if (core_timer_value() == time) {
-      asm volatile ( "svc 8" );
+    if (!yield())
+    {
+      // Nothing else running on this core.
+      // TODO: Ask other cores if there's something we can do
+      asm volatile ( "wfi" );
     }
   }
 

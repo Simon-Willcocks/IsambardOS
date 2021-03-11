@@ -9,9 +9,34 @@ extern Object object_to_pass_to( Object user, void *handler, uint64_t value );
 // The following macros are used to provide the veneers (assembly code, to optionally claim a lock,
 // establish a stack, and call the call handler for the type) for the various types of provider
 
+// Stacks: per object, from pool, shared (one thread at a time) / Recursion supported?
+
 // FIXME: Deal with exceptions, releasing the locks, etc.
+// TODO: Release and return svc (x17 -> lock)?
+// Maybe return at top level is done by making a call? That would allow for returning multiple values (or exceptions).
+
 #define ISAMBARD_PROVIDER_UNLOCKED_PER_OBJECT_STACK( type ) asm ( "\t.section .text\n"#type"_veneer: mov sp, x0\n\tbl "#type"_call_handler\n\tsvc 0xfffd\n\t.previous" );
-#define ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( type, lock, stack, stack_size ) asm ( "\t.section .text\n"#type"_veneer: adr x17, "#stack"\n\tadd sp, x17, #"#stack_size"\n\tbl "#type"_call_handler\n\tsvc 0xfffd\n\t.previous" );
+
+#define ENSTRING( n ) #n
+#define ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( type, lock, stack, stack_size ) \
+        asm ( "\t.section .text" \
+        "\n"#type"_veneer: adr x17, "#stack \
+        "\n\tadd sp, x17, #" ENSTRING( stack_size ) \
+        "\n\tadr x17, "#lock \
+        "\n\t2:" \
+        "\n\tldxr x16, [x17]" \
+        "\n\tcbz x16, 0f" \
+        "\n\tsvc 0xfffa" \
+        "\n\tb 1f" \
+        "\n0:" \
+        "\n\tstxr w16, x18, [x17]" \
+        "\n\tcbnz x16, 2b" \
+        "\n1:" \
+        "\n\tbl "#type"_call_handler" \
+        "\n\tadr x17, "#lock \
+        "\n\tsvc 0xfffb" \
+        "\n\tsvc 0xfffd" \
+        "\n\t.previous" );
 
 #define ISAMBARD_INTERFACE( name ) \
 typedef struct { integer_register r; } name; \
@@ -33,19 +58,6 @@ extern void Isambard_20( integer_register o, uint32_t call, integer_register p0,
 extern integer_register Isambard_21( integer_register o, uint32_t call, integer_register p0, integer_register p1 ); 
 extern void Isambard_30( integer_register o, uint32_t call, integer_register p0, integer_register p1, integer_register p2 ); 
 extern integer_register Isambard_31( integer_register o, uint32_t call, integer_register p0, integer_register p1, integer_register p2 );
+extern void Isambard_40( integer_register o, uint32_t call, integer_register p0, integer_register p1, integer_register p2, integer_register p3 ); 
+extern integer_register Isambard_41( integer_register o, uint32_t call, integer_register p0, integer_register p1, integer_register p2, integer_register p3 );
 
-// FIXME: this assumes a single source file for each driver
-asm (
-"Isambard_00:\n"
-"Isambard_10:\n"
-"Isambard_20:\n"
-"Isambard_30:\n"
-"Isambard_01:\n"
-"Isambard_11:\n"
-"Isambard_21:\n"
-"Isambard_31:\n"
-    "\n\tstp x29, x30, [sp, #-16]!"
-    "\n\tsvc 0xfffe"
-    "\n\tldp x29, x30, [sp], #16"
-    "\n\tret"
-    "\n.previous" );

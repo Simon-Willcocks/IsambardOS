@@ -4,18 +4,6 @@
 
 #include "drivers.h"
 
-asm ( ".section .init"
-    "\n.global _start"
-    "\n.type _start, %function"
-    "\n_start:"
-    "\n\tadr  x9, system" // From libdriver.c
-    "\n\tstr  x0, [x9]"
-    "\n\tadr  x10, stack"
-    "\n\tadd sp, x10, #8*"STACK_SIZE_STRING( STACK_SIZE )
-    "\n\tbl entry"
-    "\n\tsvc 0xfffd"
-    "\n.previous" );
-
 unsigned long long stack_lock = 0;
 unsigned long long __attribute__(( aligned( 16 ) )) stack[STACK_SIZE] = { 0x33333333 }; // Just a marker
 
@@ -66,8 +54,12 @@ void release_free_chunk( chunk *p )
     inter_map_exception( "Corrupt physical memory structure, double free?" );
   }
 
-  // FIXME:
-  // Merge chunks if prev + (1 << prev->log2size) == p
+  if ((char *)p - (char*) prev == (1 << prev->log2size)) {
+    // FIXME:
+    // Merge chunks if prev + (1 << prev->log2size) == p
+    // AND if prev is on an even boundary (i.e. the combined chunk would be
+    // on a valid boundary - e.g. combine chunks 2 & 3, not 3 & 4)
+  }
 
   p->next = *list;
   *list = p;

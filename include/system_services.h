@@ -37,5 +37,39 @@ enum {
   System_Service_PhysicalMemoryBlock = 12
 };
 
+// The only system service intercepted by the kernel. Needs EL1 to be efficient
 enum { DRIVER_SYSTEM_physical_address_of = 0x4a274f85 };
+
+// Structures known to both the kernel and the system driver
+
+// Packed objects
+typedef union {
+  uint64_t r;
+  struct __attribute__(( packed )) {
+    uint64_t start_page:24; // Max 16GB memory
+    uint64_t page_count:20;  // Max 4GB memory in one block
+    uint64_t reserved:17;
+    uint64_t memory_type:3;  // index into MAIR
+  };
+} ContiguousMemoryBlock;
+
+typedef union {
+  uint64_t r;
+  struct __attribute__(( packed )) {
+    uint64_t start_page:24; // Max 16GB memory
+    uint64_t page_count:20;  // Max 4GB memory in one block
+    uint64_t read_only:1;    // combined with physical permissions
+    uint64_t executable:1;   //  ditto
+    uint64_t memory_block:18; // interface index
+  };
+} VirtualMemoryBlock;
+
+typedef union {
+  uint64_t r;
+  struct __attribute__(( packed )) {
+    uint64_t heap_offset_lsr4:32;
+    uint64_t map_object:20;
+    uint64_t number_of_vmbs:12;
+  };
+} MapValue;
 
