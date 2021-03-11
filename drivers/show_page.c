@@ -252,9 +252,9 @@ void entry()
   show_qword( 0, 1008, cache_line_size, 0xffffffff );
   show_qword( 160, 1008, 4 << (cache_line_size & 0xf), 0xffffffff );
 
-  static uint64_t volatile n = 0;
+  static uint64_t n = 0;
   for (n = 0;;n++) {
-    show_qword( 0, 1024, n, 0xffffffff );
+    show_qword( 0, 1024, n, Green );
     show_page( (void*) 0x1000 );
     asm ( "svc 0" );
     yield();
