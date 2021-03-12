@@ -281,15 +281,6 @@ static void show_page( uint32_t *number )
   }
 }
 
-
-ISAMBARD_INTERFACE( GPU_MAILBOX_CHANNEL )
-ISAMBARD_INTERFACE( GPU_MAILBOX )
-
-// Both intimitely related interfaces in the one file
-#include "interfaces/client/GPU_MAILBOX.h"
-
-GPU_MAILBOX_CHANNEL gpu_mailbox = {};
-
 PHYSICAL_MEMORY_BLOCK screen_page = { .r = 0 };
 bool screen_mapped = false;
 
@@ -329,18 +320,18 @@ void initialise_display()
 
   NUMBER response;
 
-retry: 
-  response = GPU_MAILBOX_CHANNEL__send_for_response( gpu_mailbox, mailbox_request_PA );
+  // If the content of the structure is no longer fixed, the following line will be needed:
+  // flush_and_invalidate_cache( mailbox_request, mailbox_request[0] );
 
-  asm ( "svc 0" );
+  response = GPU_MAILBOX_CHANNEL__send_for_response( channel8, mailbox_request_PA );
+
+  flush_and_invalidate_cache( mailbox_request, mailbox_request[0] );
 
   if (response.r != mailbox_request_PA.r) {
      for (;;) { led_blink( 2 ); }
   }
 
   if ((mailbox_request[1] & 0x80000000) == 0) {
-    //led_blink( 3 );
-    goto retry; // This works. :(
     for (;;) { led_blink( 3 ); }
   }
 
@@ -385,9 +376,6 @@ ISAMBARD_PROVIDER_UNLOCKED_PER_OBJECT_STACK( FB )
 
 void expose_frame_buffer()
 {
-  GPU_MAILBOX factory = GPU_MAILBOX_from_integer_register( get_service( "Pi GPU Mailboxes" ).r );
-  gpu_mailbox = GPU_MAILBOX__claim_channel( factory, NUMBER_from_integer_register( 8 ) );
-
   FB fb = { .p = &fb_service_singleton.object };
   SERVICE obj = FB_SERVICE_to_pass_to( system.r, fb );
   register_service( "Frame Buffer", obj );

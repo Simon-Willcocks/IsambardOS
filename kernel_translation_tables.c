@@ -172,7 +172,8 @@ void switch_to_running_in_high_memory( Core *phys_core, void (*himem_code)( Core
                "\n\torr %[tmp], %[tmp], #(1<<0)"      // M
                "\n\torr %[tmp], %[tmp], #(1<<2)"      // C
                "\n\torr %[tmp], %[tmp], #(1<<12)"     // I
-               "\n\torr %[tmp], %[tmp], #(1<<26)"     // UCI Allow EL1 to use cache maintenance operations
+               "\n\torr %[tmp], %[tmp], #(1<<14)"     // DZE Allow EL0 to use DC ZVA (for fast bzero)
+               "\n\torr %[tmp], %[tmp], #(1<<26)"     // UCI Allow EL0 to use cache maintenance operations
                "\n\tmsr SCTLR_EL1, %[tmp]"
 
 	       // Running in low memory, correct stack pointer (in Core structure)

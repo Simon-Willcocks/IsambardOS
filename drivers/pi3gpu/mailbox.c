@@ -24,6 +24,9 @@ static int next_channel( int c )
   return (c + 1) % 16;
 }
 
+uint32_t debug_mailbox_message = -1;
+uint32_t debug_mailbox_state = -1;
+
 void mailbox_interrupt()
 {
   uint32_t mailbox0_pending = devices.mailbox[0].config;
@@ -76,9 +79,6 @@ void mailbox_interrupt()
   }
 }
 
-ISAMBARD_INTERFACE( GPU_MAILBOX )
-ISAMBARD_INTERFACE( GPU_MAILBOX_CHANNEL )
-
 #include "interfaces/provider/GPU_MAILBOX.h"
 #include "interfaces/provider/SERVICE.h"
 
@@ -92,9 +92,8 @@ ISAMBARD_PROVIDER( MBOX, AS_GPU_MAILBOX( MBOX ) ; AS_SERVICE( MBOX ) )
 ISAMBARD_GPU_MAILBOX_CHANNEL__SERVER( Channel )
 ISAMBARD_PROVIDER( Channel, AS_GPU_MAILBOX_CHANNEL( Channel ) )
 
-// These cannot be static, or the linker won't find them
 integer_register mailbox_stack_lock = 0;
-integer_register mailbox_stack[64];
+integer_register __attribute__(( aligned(16) )) mailbox_stack[64];
 
 // Using the driver initialisation stack
 ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( MBOX, mailbox_stack_lock, mailbox_stack, 64 * 8 )
@@ -124,9 +123,10 @@ GPU_MAILBOX_CHANNEL MBOX__GPU_MAILBOX__claim_channel( MBOX o, NUMBER channel )
 // I don't care when it becomes not-empty (because that was me), or
 // empty.
 
+static uint64_t send_lock = 0;
+
 static void send_message( uint32_t message, int dest, bool response_expected )
 {
-  static uint64_t send_lock = 0;
   bool wait_to_continue = response_expected;
 
   claim_lock( &send_lock );
@@ -154,6 +154,8 @@ static void send_message( uint32_t message, int dest, bool response_expected )
   if (wait_to_continue) {
     wait_until_woken(); // I might have to wait to send, I *will* be waiting for the response.
   }
+
+  asm ( "svc 0" );
 }
 
 NUMBER Channel__GPU_MAILBOX_CHANNEL__send_for_response( Channel c, NUMBER message )
@@ -179,56 +181,37 @@ uint32_t *const mailbox_request_buffer = &mailbox_request[5];
 
 // Routines 
 
-static void flush_and_invalidate_cache( void *start, int length )
+void flush_and_invalidate_cache( void *start, int length )
 {
   dsb();
-  asm ( "svc 0" ); return;
 
-  const uint32_t cache_line_size = 32; // Assumption FIXME
-  uint8_t *p = start;
+  static uint64_t cache_line_size = 3; // Probably higher, but non-zero ensures loop completes
+  if (cache_line_size == 3) {
+    asm volatile ( "mrs %[s], DCZID_EL0" : [s] "=r" (cache_line_size) );
+  }
+
+  integer_register p = (integer_register) start;
+  length += (p & ((1 << cache_line_size)-1));
+  p = p & ~((1 << cache_line_size)-1);
   while (length > 0) {
-    asm volatile ( "dc ivac, %[va]" : : [va] "r" (p) );
-    p += cache_line_size;
-    length -= cache_line_size;
+    asm volatile ( "dc civac, %[va]" : : [va] "r" (p) );
+    p += (1 << cache_line_size);
+    length -= (1 << cache_line_size);
   }
 }
 
-static void perform_arm_vc_mailbox_transfer()
+uint32_t tag_request()
 {
-retry:
-  flush_and_invalidate_cache( mailbox_request, mailbox_request[0] );
-  static uint32_t request = 0;
-  if (request == 0) {
-    uint64_t phys_addr = DRIVER_SYSTEM__physical_address_of( driver_system(), NUMBER_from_pointer( &mailbox_request ) ).r;
-    request = 0x8 | phys_addr;
+  static uint32_t phys_addr = 0;
+  if (phys_addr == 0) {
+    // Welcome back to the days of himem and lomem in a PC...
+    uint64_t address = DRIVER_SYSTEM__physical_address_of( driver_system(), NUMBER_from_pointer( &mailbox_request ) ).r;
+    if (address >> 32) {
+      asm ( "brk 2" );
+    }
+    phys_addr = (uint32_t) address;
   }
-
-  while (devices.mailbox[1].status & 0x80000000) { // Tx full
-    yield();
-  }
-
-  // Channel 8: Request from ARM for response by VC
-  devices.mailbox[1].value = request;
-  dsb();
-  uint32_t response;
-
-  while (devices.mailbox[0].status & 0x40000000) { // Rx empty
-    yield();
-  }
-
-  response = devices.mailbox[0].value;
-
-  if (response != request) {
-    for (;;) { asm volatile ( "svc 1\n\tsvc 4" ); }
-  }
-
-  flush_and_invalidate_cache( mailbox_request, mailbox_request[0] );
-  yield();
-
-  if ((mailbox_request[1] & 0x80000000) == 0) {
-	  goto retry; // FIXME Why is this happening, especially since it doesn't when -fno-toplevel-reorder is there?
-    for (;;) { asm volatile ( "svc 1\n\tsvc 5" ); }
-  }
+  return phys_addr;
 }
 
 // Read/Write a single tag; buffer_size should be greater of request and response sizes
@@ -245,7 +228,9 @@ uint32_t single_mailbox_tag_access( uint32_t tag, uint32_t buffer_size )
   mailbox_request[4] = 0; // request
   mailbox_request[5 + (buffer_size / sizeof( mailbox_request[0] ))] = 0; // end tag
 
-  perform_arm_vc_mailbox_transfer();
+  flush_and_invalidate_cache( mailbox_request, mailbox_request[0] );
+
+  send_message( tag_request(), 8, true );
 
   return mailbox_request[4];
 }

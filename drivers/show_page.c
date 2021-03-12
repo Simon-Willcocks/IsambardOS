@@ -219,17 +219,80 @@ static void show_pointer( int x, int y, void *ptr, uint32_t colour )
 }
 */
 
-static void show_page( uint32_t *number )
+static void show_page( uint32_t *number, uint32_t label )
 {
   // 4 * 16 * 16 * 4 = 4096 bytes
   for (int y = 0; y < 4*16; y++) {
-    show_word( 0, y * 8 + 64, ((char *)(&number[y*16]) - (char *)0), White );
+    show_word( 0, y * 8 + 64, label + y*64, White );
     for (int x = 0; x < 16; x++) {
       uint32_t colour = White;
       if (0 == (y & 7) || 0 == (x & 7)) colour = Green;
       show_word( x * 68 + 72, y * 8 + 64, number[x + y * 16], colour );
     }
   }
+}
+
+PHYSICAL_MEMORY_BLOCK page_to_display = { 0 };
+uint32_t page_start = 0;
+
+uint64_t tnd_stack_lock = 0;
+struct {
+  uint64_t stack[64];
+} tnd_stack = { { 0x6666666666 } };
+
+typedef NUMBER TND;
+
+ISAMBARD_INTERFACE( TRIVIAL_NUMERIC_DISPLAY )
+
+#include "interfaces/provider/TRIVIAL_NUMERIC_DISPLAY.h"
+#include "interfaces/provider/SERVICE.h"
+
+ISAMBARD_TRIVIAL_NUMERIC_DISPLAY__SERVER( TND )
+ISAMBARD_SERVICE__SERVER( TND )
+ISAMBARD_PROVIDER( TND, AS_TRIVIAL_NUMERIC_DISPLAY( TND )  ; AS_SERVICE( TND ) )
+ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( TND, tnd_stack_lock, tnd_stack, 64 * 8 )
+
+void TND__TRIVIAL_NUMERIC_DISPLAY__show_4bits( TND o, NUMBER x, NUMBER y, NUMBER value, NUMBER colour )
+{
+  o = o;
+  show_nibble( x.r, y.r, value.r & 0xf, colour.r );
+}
+
+void TND__TRIVIAL_NUMERIC_DISPLAY__show_8bits( TND o, NUMBER x, NUMBER y, NUMBER value, NUMBER colour )
+{
+  o = o;
+  show_nibble( x.r+8, y.r, value.r & 0xf, colour.r );
+  show_nibble( x.r, y.r, (value.r >> 4) & 0xf, colour.r );
+}
+
+void TND__TRIVIAL_NUMERIC_DISPLAY__show_32bits( TND o, NUMBER x, NUMBER y, NUMBER value, NUMBER colour )
+{
+  o = o;
+  show_word( x.r, y.r, value.r, colour.r );
+}
+
+void TND__TRIVIAL_NUMERIC_DISPLAY__show_64bits( TND o, NUMBER x, NUMBER y, NUMBER value, NUMBER colour )
+{
+  o = o;
+  show_qword( x.r, y.r, value.r, colour.r );
+}
+
+extern uint32_t devices;
+
+void TND__TRIVIAL_NUMERIC_DISPLAY__set_page_to_show( TND o, PHYSICAL_MEMORY_BLOCK page, NUMBER start )
+{
+  o = o;
+
+  DRIVER_SYSTEM__map_at( driver_system(), page, NUMBER_from_integer_register( (uint64_t) &devices ) );
+  page_to_display = page;
+  page_start = start.r;
+}
+
+void TND__TRIVIAL_NUMERIC_DISPLAY__show_page( TND o )
+{
+  o = o;
+
+  show_page( &devices, page_start );
 }
 
 void entry()
@@ -247,6 +310,9 @@ void entry()
   PHYSICAL_MEMORY_BLOCK screen_page = FRAME_BUFFER__get_frame_buffer( fb );
   DRIVER_SYSTEM__map_at( driver_system(), screen_page, NUMBER_from_integer_register( mapped_address ) );
 
+  SERVICE obj = TND_SERVICE_to_pass_to( system.r, NUMBER_from_integer_register( 0 ) );
+  register_service( "Trivial Numeric Display", obj );
+/*
   uint64_t cache_line_size;
   asm volatile ( "mrs %[s], DCZID_EL0" : [s] "=r" (cache_line_size) );
   show_qword( 0, 1008, cache_line_size, 0xffffffff );
@@ -254,10 +320,11 @@ void entry()
 
   static uint64_t n = 0;
   for (n = 0;;n++) {
-    show_qword( 0, 1024, n, Green );
+    show_qword( 0, 1024, n, Blue );
     show_page( (void*) 0x1000 );
     asm ( "svc 0" );
     yield();
   }
+*/
 }
 

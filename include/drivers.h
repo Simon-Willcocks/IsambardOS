@@ -4,8 +4,6 @@
 register uint32_t this_thread asm("x18");
 #endif
 
-void entry();
-
 typedef integer_register Object;
 
 #if 0

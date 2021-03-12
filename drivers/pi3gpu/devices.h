@@ -1,5 +1,11 @@
 #include "drivers.h"
 
+ISAMBARD_INTERFACE( GPU_MAILBOX_CHANNEL )
+ISAMBARD_INTERFACE( GPU_MAILBOX )
+
+// Both intimitely related interfaces in the one file
+#include "interfaces/client/GPU_MAILBOX.h"
+
 #define STACK_SIZE 64
 
 extern struct __attribute__(( packed )) {
@@ -150,8 +156,13 @@ extern struct __attribute__(( packed )) {
 extern void emmc_interrupt();
 extern void mailbox_interrupt();
 
-extern void expose_emmc();
+// Used for tag interface to GPU by fb, sd, power, etc.
+// Will be initialised before any other subsystems exposed.
+GPU_MAILBOX_CHANNEL channel8;
+
+extern void expose_gpu_mailbox();
 extern void expose_frame_buffer();
+extern void expose_emmc();
 
 extern uint32_t *const mailbox_request_buffer;
 extern uint32_t single_mailbox_tag_access( uint32_t tag, uint32_t buffer_size );

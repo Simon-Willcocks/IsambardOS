@@ -131,6 +131,12 @@ ${TARGET}gcc -o kernel8.elf -T ld.script -I built_drivers/ $KERNEL_ELEMENTS buil
 
 ${TARGET}objcopy kernel8.elf sdfat/kernel8.img -O binary &&
 ${TARGET}objdump -x --source --disassemble-all kernel8.elf > kernel8.dump &&
+
+# Check for common mistakes in the build or code
+echo Checking that all variables are initialised in the kernel files &&
 ( grep -vl \\.bss kernel8.dump || ( echo Uninitialised variables expand the kernel image unnecessarily && false ) ) &&
-( if grep ' _binary_built_.*bin_' kernel8.dump | grep -e "[1-9a-f][0-9a-f][0-9a-f] g" -e "[0-9a-f][1-9a-f][0-9a-f] g" -e "[0-9a-f][0-9a-f][1-9a-f] g"  ; then echo Build failure, drivers not aligned properly ; false ; else true; fi )
+echo Checking that the drivers are properly padded to whole pages &&
+grep ' _binary_built_.*bin_' kernel8.dump | grep -e "[1-9a-f][0-9a-f][0-9a-f] g" -e "[0-9a-f][1-9a-f][0-9a-f] g" -e "[0-9a-f][0-9a-f][1-9a-f] g" && ( echo Build failure, drivers not aligned properly ; exit 1 )
+echo Checking that all variables with the word \"stack\" at the end of the name are 16-byte aligned &&
+grep '^000.*stack\>' {,built_drivers/}*.dump | grep '[1-9a-f] g' && ( echo Possible unaligned stacks? ; exit 1 ) || true
 

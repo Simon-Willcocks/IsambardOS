@@ -11,8 +11,13 @@
 
 void sleep_ms( uint64_t ms ) // FIXME
 {
+	// Hack for qemu, that doesn't seem to implement this timer
+	// Need to fix this, wait_until_woken( timeout )? - locks thread, and put it in a timeout queue.
+	// If nothing knows to wake the thread, it would act like a sleep.
+	// system driver has to pass ticks to the kernel, which decrements the timeout at the head of the
+	// timeout list of threads, waking it (and any others) if it gets to zero
   uint64_t match = DRIVER_SYSTEM__get_core_timer_value( driver_system() ).r + 2000 * ms; // 2000000 ~= 1s
-  for (uint64_t now = match - 1; now < match; now = DRIVER_SYSTEM__get_core_timer_value( driver_system() ).r) {
+  for (uint64_t now = match - 1; now < match && now != 0; now = DRIVER_SYSTEM__get_core_timer_value( driver_system() ).r) {
     yield();
   }
 }
@@ -91,6 +96,8 @@ void map_page( uint64_t physical, void *virtual )
   DRIVER_SYSTEM__map_at( driver_system(), device_page, NUMBER_from_integer_register( (integer_register) virtual ) );
 }
 
+GPU_MAILBOX_CHANNEL gpu_mailbox = {};
+
 void entry()
 {
   map_page( 0x3f00b000, (void*) &devices.unused1 );
@@ -103,6 +110,11 @@ void entry()
 
   DRIVER_SYSTEM__register_interrupt_handler( driver_system(), obj, NUMBER_from_integer_register( 8 ) );
 
+  expose_gpu_mailbox();
+
+  GPU_MAILBOX factory = GPU_MAILBOX_from_integer_register( get_service( "Pi GPU Mailboxes" ).r );
+  channel8 = GPU_MAILBOX__claim_channel( factory, NUMBER_from_integer_register( 8 ) );
+
   memory_write_barrier(); // About to write to devices.timer
   devices.timer.load = (1 << 23) - 1; // Max load value for 23 bit counter
   devices.timer.control |= 0x2a2; // Interrupts enabled, but see bit 0 of Enable_Basic_IRQs
@@ -111,10 +123,9 @@ void entry()
   devices.interrupts.Enable_Basic_IRQs = 1; // Enable "ARM Timer" IRQ
   devices.interrupts.Enable_Basic_IRQs = 2; // Enable "ARM Mailbox" IRQ
 
-  expose_gpu_mailbox();
   expose_frame_buffer();
+  expose_emmc();
   /*
-  // expose_emmc();
   for (;;) {
     yield();
     extern bool screen_mapped;

@@ -1528,6 +1528,7 @@ static inline thread_switch SEL1_LOWER_AARCH64_SYNC_CODE_may_change_map( Core *c
     case 0b100110:
       {
         // SP alignment fault
+        BSOD( 3 );
         BSOD( __COUNTER__ );
       }
       break;

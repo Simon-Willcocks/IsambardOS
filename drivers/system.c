@@ -125,9 +125,9 @@ extern uint64_t stack_top;
  
 void thread_exit()
 {
-        for (;;) { asm ( "svc 0xfffc" ); }
+        for (;;) { asm ( "mov x0, #0\n\tsvc 0xfff5" ); } // FIXME This code has no stack.
   // Put into a container, for re-starting later...?
-  for (;;) { wait_until_woken(); asm ( "brk 12" ); }
+  //for (;;) { wait_until_woken(); asm ( "brk 12" ); }
 }
 
 #define INT_STACK_SIZE 64
@@ -375,6 +375,25 @@ SERVICE MapValue__SYSTEM__get_service( MapValue o, NUMBER name_crc )
     s++;
   }
   return SERVICE_from_integer_register( 0 );
+}
+
+PHYSICAL_MEMORY_BLOCK MapValue__SYSTEM__allocate_memory( MapValue o, NUMBER size )
+{
+  o = o;
+  PHYSICAL_MEMORY_BLOCK result = { 0 };
+
+  integer_register r = Isambard_11( memory_manager, 1, size.r ); // Allocate
+
+  if (r != 0) {
+    ContiguousMemoryBlock cmb = { .start_page = r >> 12,
+                                  .page_count = size.r >> 12,
+                                  .memory_type = Fully_Cacheable };
+    // Don't use the ContiguousMemoryBlock_PHYSICAL_MEMORY_BLOCK_to_return routine, the handler must be the
+    // special value for the kernel to recognise it.
+    result.r = object_to_return( (void*) System_Service_PhysicalMemoryBlock, cmb.r );
+  }
+
+  return result;
 }
 
 NUMBER MapValue__DRIVER_SYSTEM__get_core_interrupts_count( MapValue o )

@@ -4,10 +4,11 @@ extern Object duplicate_to_pass_to( Object object, Object original );
 extern Object object_to_return( void *handler, uint64_t value );
 extern Object object_to_pass_to( Object user, void *handler, uint64_t value );
 
-#define ISAMBARD_PROVIDER( type, switches ) integer_register type##_call_handler( type o, integer_register call, integer_register p1, integer_register p2, integer_register p3 ) { p1=p1; p2=p2; p3=p3; o = o; switches; return unknown_call( call ); }
+#define ISAMBARD_PROVIDER( type, switches ) integer_register type##_call_handler( type o, integer_register call, integer_register p1, integer_register p2, integer_register p3, integer_register p4 ) { p1=p1; p2=p2; p3=p3; p4=p4; o = o; switches; return unknown_call( call ); }
 
 // The following macros are used to provide the veneers (assembly code, to optionally claim a lock,
 // establish a stack, and call the call handler for the type) for the various types of provider
+// Stacks SHALL BE 16-byte aligned. The variables have to be non-static, for the inline assembly to see them at link time.
 
 // Stacks: per object, from pool, shared (one thread at a time) / Recursion supported?
 
@@ -52,12 +53,12 @@ extern integer_register unknown_call( integer_register call );
 
 extern void Isambard_00( integer_register o, uint32_t call ); 
 extern integer_register Isambard_01( integer_register o, uint32_t call ); 
-extern void Isambard_10( integer_register o, uint32_t call, integer_register p0 ); 
-extern integer_register Isambard_11( integer_register o, uint32_t call, integer_register p0 ); 
-extern void Isambard_20( integer_register o, uint32_t call, integer_register p0, integer_register p1 ); 
-extern integer_register Isambard_21( integer_register o, uint32_t call, integer_register p0, integer_register p1 ); 
-extern void Isambard_30( integer_register o, uint32_t call, integer_register p0, integer_register p1, integer_register p2 ); 
-extern integer_register Isambard_31( integer_register o, uint32_t call, integer_register p0, integer_register p1, integer_register p2 );
-extern void Isambard_40( integer_register o, uint32_t call, integer_register p0, integer_register p1, integer_register p2, integer_register p3 ); 
-extern integer_register Isambard_41( integer_register o, uint32_t call, integer_register p0, integer_register p1, integer_register p2, integer_register p3 );
+extern void Isambard_10( integer_register o, uint32_t call, integer_register p1 ); 
+extern integer_register Isambard_11( integer_register o, uint32_t call, integer_register p1 ); 
+extern void Isambard_20( integer_register o, uint32_t call, integer_register p1, integer_register p2 ); 
+extern integer_register Isambard_21( integer_register o, uint32_t call, integer_register p1, integer_register p2 ); 
+extern void Isambard_30( integer_register o, uint32_t call, integer_register p1, integer_register p2, integer_register p3 ); 
+extern integer_register Isambard_31( integer_register o, uint32_t call, integer_register p1, integer_register p2, integer_register p3 );
+extern void Isambard_40( integer_register o, uint32_t call, integer_register p1, integer_register p2, integer_register p3, integer_register p4 ); 
+extern integer_register Isambard_41( integer_register o, uint32_t call, integer_register p1, integer_register p2, integer_register p3, integer_register p4 );
 
