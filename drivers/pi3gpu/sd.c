@@ -77,6 +77,7 @@ void emmc_interrupt()
         block_data[block_index++] = devices.emmc.DATA;
         block_size -= 4;
       }
+      memory_read_barrier(); // Completed our reads of devices.emmc
     }
   }
 
@@ -98,20 +99,13 @@ static bool power_on_sd_host()
 {
 	debug_last_command = 1;
   if (!device_exists( SD_Card )) return false;
-debug_progress = 5; yield();
-debug_last_command = 2;
   if (0 == (mailbox_request_buffer[1] & 1)) {
     // Is off.
-debug_last_command = 3;
-debug_progress = 6; yield();
     mailbox_request_buffer[0] = SD_Card;
     mailbox_request_buffer[1] = 3; // Power on, and wait.
     single_mailbox_tag_access( 0x00028001, 8 );
-debug_last_acommand = mailbox_request_buffer[1];
     return 1 == mailbox_request_buffer[1];
   }
-debug_last_command = 4;
-debug_progress = 7; yield();
   return true;
 }
 
@@ -378,8 +372,9 @@ debug_last_acommand ++;
   data_thread = this_thread;
 
   devices.emmc.BLKSIZECNT = (1 << 16) | 8; // 1 block of 8 bytes
+  block_index = 0;
   block_size = 8;
-  block_data = (void*) 0x10200;
+  block_data = (void*) 0x10100;
 
   debug_progress = 18; yield();
 
@@ -388,8 +383,15 @@ debug_last_acommand ++;
 
   debug_progress = 19; yield();
 
-  //command( 17, 0 );
+  memory_write_barrier(); // About to write to devices.emmc
+  devices.emmc.BLKSIZECNT = (1 << 16) | 512; // 1 block of 512 bytes
+  block_index = 0;
+  block_size = 512;
+  block_data = (void*) 0x10200;
+  command( 17, 0 );
+  wait_until_woken(); // As data_thread...
 
+  flush_and_invalidate_cache( (void*) 0x10200, 512 );
 }
 
 typedef struct { 
@@ -497,7 +499,7 @@ void expose_emmc()
   for (int i = 0; i < 100; i++) { yield(); mapped_memory[2] = i; }
 
   initialise_sd_interface();
-  debug_progress = 20; yield();
+  debug_progress = 20;
 
   wait_until_woken();
 }
