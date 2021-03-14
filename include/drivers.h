@@ -130,9 +130,24 @@ static inline void memory_read_barrier()
 // 1 Means the wake_thread occurred before wait_until_woken was called.
 // >1 Means multiple wake_threads occurred
 // TODO Add timeout parameter (return -ve on timeout)
-extern integer_register wake_thread( uint32_t thread );
+extern integer_register gate_function( uint32_t thread, integer_register timeout );
 
-static inline uint64_t wait_until_woken()
+static inline void wake_thread( uint32_t thread )
 {
-  return wake_thread( 0 );
+  gate_function( thread, 0 );
+}
+
+static inline integer_register wait_until_woken()
+{
+  return gate_function( 0, 0 );
+}
+
+static inline integer_register sleep_unless_woken( integer_register timeout )
+{
+  return gate_function( 0, timeout );
+}
+
+static inline void sleep_ms( integer_register timeout )
+{
+  if (timeout <= 0) yield(); else gate_function( 0, timeout );
 }

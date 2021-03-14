@@ -854,8 +854,8 @@ void __attribute__(( noreturn )) enter_secure_el1_himem( Core *core )
 
   asm volatile ( "\tmsr VBAR_EL1, %[table]\n" : : [table] "r" (VBAR_EL1) );
 
-  // Bit 0 allow access to CNTPCT_EL0
-  asm volatile ( "\tmsr CNTKCTL_EL1, %[bits]\n" : : [bits] "r" (0b1) );
+  // ARM DDI 0487C.a D10-2942
+  asm volatile ( "\tmsr CNTKCTL_EL1, %[bits]\n" : : [bits] "r" (0b1100000011) );
 
   core->core = core;
 
@@ -1183,10 +1183,53 @@ static inline thread_switch SEL1_LOWER_AARCH64_SYNC_CODE_may_change_map( Core *c
       return result;
     case 0xfff5: // gate (wait_until_woken or wake_thread)
     {
-      if (thread->regs[0] == 0) { // Wait for gate
-              // TODO Add to timeout list, if thread->regs[1] > 0
-        if (thread->gate > 0) {
-          thread->regs[0] = thread->gate;
+      // Thread parameter x0: 0 = this thread should wait, <>0 thread to wake
+      // Timeout parameter x1: 0 => wait forever, > 0 => wait this many ticks
+      //
+      // Exception to above, thread = interrupt thread => timer tick, but only
+      // from system driver.
+      //
+      // Timeout queue is implemented using x16 and x17; threads are only
+      // put in the queue if they've called wake_until_woken, which means
+      // they're not expecting those registers to be preserved.
+      //
+      // The gate value can be modified by other threads, so a regular
+      // thread register cannot be used. (The other thread has to be in
+      // the same map as the blocked one.)
+      //
+      // Ticks to wait after the previous entry times out will be preserved in x1.
+      //
+      // wait_until_woken( timeout ) returns
+      // A > 0 if it happened without needing to be blocked (the number of
+      //       times it was released)
+      // B = 0 if it blocked, and was then released (the normal situation)
+      // C < 0 if the wait timed out
+      //
+      // wake_thread( thread ) returns the previous value of gate
+      if (thread->regs[0] == 0) { // Wait for gate, or timer tick
+        if (thread == core->interrupt_thread) {
+          if (thread->current_map != system_map_index) {
+            BSOD( __COUNTER__ ); // FIXME: Throw an exception, an interrupt handler tried to wait!
+          }
+          // Timer tick
+          if (core->blocked_with_timeout != 0) {
+            if (--core->blocked_with_timeout->regs[1] == 0) {
+              thread_context *blocked_thread = core->blocked_with_timeout;
+              do {
+                blocked_thread->regs[0] = -1; // C
+                blocked_thread->gate = 0; // No longer blocked
+                insert_new_thread_after_old( blocked_thread, thread );
+                blocked_thread = (void*) blocked_thread->regs[17];
+              } while (blocked_thread != 0 && blocked_thread->regs[1] == 0);
+              core->blocked_with_timeout = blocked_thread;
+              if (blocked_thread != 0) {
+                blocked_thread->regs[16] = (integer_register) &core->blocked_with_timeout;
+              }
+            }
+          }
+        }
+        else if (thread->gate > 0) {
+          thread->regs[0] = thread->gate; // A
           thread->gate = 0;
         }
         else {
@@ -1194,7 +1237,32 @@ static inline thread_switch SEL1_LOWER_AARCH64_SYNC_CODE_may_change_map( Core *c
           core->runnable = thread->next;
           remove_thread( thread );
           thread->gate = thread_code( thread ); // Marks as blocked
-          thread->regs[0] = 0;
+          thread->regs[0] = 0; // B (when it finally returns)
+
+          if (thread->regs[1] > 0) {
+            thread_context **prev = &core->blocked_with_timeout;
+            thread_context *blocked_thread = *prev;
+            integer_register remaining = thread->regs[1];
+            while (blocked_thread != 0 && remaining > blocked_thread->regs[1]) {
+              remaining -= blocked_thread->regs[1];
+              prev = (void*) &blocked_thread->regs[17];
+              blocked_thread = *prev;
+            }
+            thread->regs[1] = remaining;
+            thread->regs[17] = (integer_register) blocked_thread; // Next in list, if any
+            thread->regs[16] = (integer_register) prev; // Pointer to pointer to this thread
+            *prev = thread;
+
+            if (blocked_thread != 0) {
+              // The next thread has remaining fewer ticks to wait, once this thread times out
+              blocked_thread->regs[1] -= remaining;
+              blocked_thread->regs[16] = (integer_register) &thread->regs[17];
+            }
+          }
+          else {
+            thread->regs[16] = 0; // Not in blocked_with_timeout queue
+            thread->regs[17] = 0; // Not in blocked_with_timeout queue
+          }
         }
       }
       else if (is_real_thread( thread->regs[0] )) {
@@ -1204,9 +1272,19 @@ static inline thread_switch SEL1_LOWER_AARCH64_SYNC_CODE_may_change_map( Core *c
 
         if (thread->current_map == release_thread->current_map) { // More checks?
           if (release_thread->gate == (int32_t) thread->regs[0]) {
+            // Indicates the thread is blocked 
             insert_new_thread_after_old( release_thread, thread );
             release_thread->gate = 0;
-            // TODO remove from timeout list
+            if (release_thread->regs[16] != 0) {
+              // In a timeout list
+              thread_context **prevp = (thread_context **) release_thread->regs[16];
+              thread_context *next = (thread_context *) release_thread->regs[17];
+              *prevp = next;
+              if (next != 0) {
+                next->regs[1] += release_thread->regs[1];
+                next->regs[16] = release_thread->regs[16];
+              }
+            }
           }
           else {
             release_thread->gate++;
@@ -1551,7 +1629,7 @@ static inline thread_switch SEL1_LOWER_AARCH64_SYNC_CODE_may_change_map( Core *c
         case 5: BSOD( 10 ); break;
         case 6: BSOD( 11 ); break;
         case 7: BSOD( 12 ); break;
-	}
+        }
       }
       break;
     default:

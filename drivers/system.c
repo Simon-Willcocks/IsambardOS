@@ -248,13 +248,18 @@ interrupts_handled[0]+= 0x100000;
 
   memory_read_barrier(); // Completed our reads of device_pages.QA7
 
+  if (0 != (sources & (1 << 11))) {
+    memory_write_barrier(); // About to write to device_pages.QA7
+    device_pages.QA7.Local_timer_write_flags = (1 << 31);
+    ms_ticks ++;
+    gate_function( 0, 0 ); // Special case for interrupt handler thread
+asm( "svc 0" );
+    // QA7 is shared between cores, does that mean only one core will receive this interrupt?
+    // FIXME
+  }
+
   for (int i = 0; sources != 0 && i < 12; i++) {
     if (0 != ((1 << i) & sources)) {
-      if (i == 11) {
-        memory_write_barrier(); // About to write to device_pages.QA7
-        device_pages.QA7.Local_timer_write_flags = (1 << 31);
-	ms_ticks ++;
-      }
       if (interrupt_handlers[i].r != 0) {
 interrupts_handled[i]+=16;
         INTERRUPT_HANDLER__interrupt( interrupt_handlers[i] );
@@ -614,13 +619,16 @@ static void start_ms_timer()
 {
   device_pages.QA7.Local_Interrupt_routing0 = 0; // Direct local timer interrupt to CPU 0 IRQ
 
-  device_pages.QA7.timer_prescaler = 0x06AAAAAB; // 19.2... somethings
+  //device_pages.QA7.timer_prescaler = 0x06AAAAAB; // 19.2... somethings
+  device_pages.QA7.timer_prescaler = 0x80000000;
   device_pages.QA7.control = (1 << 8); // Timer enable (increment in ones)
 
   // Reasonably close to 1ms ticks: 19200000/500
   // device_pages.QA7.Local_timer_control_and_status = (1 << 29) | (1 << 28) | 19200000/500; // Enable timer, interrupt.
+  // device_pages.QA7.Local_timer_control_and_status = (1 << 29) | (1 << 28) | ((1 << 28) - 1); // Enable timer, and interrupt. Longest timeout
+
+  device_pages.QA7.Local_timer_control_and_status = (1 << 29) | (1 << 28) | 384; // Enable timer, interrupt.  ~10x per second?
   device_pages.QA7.Local_timer_write_flags = (1 << 31) | (1 << 30); // Clear IRQ and load timer
-  device_pages.QA7.Local_timer_control_and_status = (1 << 29) | (1 << 28) | ((1 << 28) - 1); // Enable timer, and interrupt. Longest timeout
 
   device_pages.QA7.Core_IRQ_Source[0] = 0x3ff; // (1 << 8);
   device_pages.QA7.Core_IRQ_Source[1] = 0x3ff; // (1 << 8);

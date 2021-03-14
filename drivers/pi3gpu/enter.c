@@ -9,19 +9,6 @@
 
 #include "devices.h"
 
-void sleep_ms( uint64_t ms ) // FIXME
-{
-	// Hack for qemu, that doesn't seem to implement this timer
-	// Need to fix this, wait_until_woken( timeout )? - locks thread, and put it in a timeout queue.
-	// If nothing knows to wake the thread, it would act like a sleep.
-	// system driver has to pass ticks to the kernel, which decrements the timeout at the head of the
-	// timeout list of threads, waking it (and any others) if it gets to zero
-  uint64_t match = DRIVER_SYSTEM__get_core_timer_value( driver_system() ).r + 2000 * ms; // 2000000 ~= 1s
-  for (uint64_t now = match - 1; now < match && now != 0; now = DRIVER_SYSTEM__get_core_timer_value( driver_system() ).r) {
-    yield();
-  }
-}
-
 unsigned long long stack_lock = 0;
 unsigned long long __attribute__(( aligned( 16 ) )) stack[STACK_SIZE] = { 0x33333333 }; // Just a marker
 

@@ -63,12 +63,12 @@ struct isambard_core {
   Aarch64_VMSA_entry core_tt_l3[512]; // 4k pages
   Aarch64_VMSA_entry core_tt_l2[512]; // 2M blocks or level 3 table
   Aarch64_VMSA_entry core_tt_l1[16];  // 1G level 2 tables
-  enum { EL3, SECURE_EL1, EL2 } core_state;
   uint32_t core_number;
   interface_index loaded_map;
   FPContext *fp; // Null if no thread using FP (including thread ending when holding fp)
   thread_context *finished_threads;     // Store of threads that have completed
   thread_context *interrupt_thread;     // Thread that calls interrupt handlers (with interrupts disabled)
+  thread_context *blocked_with_timeout;
   struct isambard_core *physical_address;      // Physical address of this struct
   struct isambard_core *low_virtual_address;       // Virtual address of this struct, offset from _start
   // Keep the following at the top of a page (CORE_STACK_SIZE is calculated by build.sh)

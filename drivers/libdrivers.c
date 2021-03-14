@@ -32,7 +32,7 @@ asm ( ".section .text" \
     "\n\tret" \
     "\n.previous" );
 
-SYSTEM_CALL( wake_thread, 0xfff5 );
+SYSTEM_CALL( gate_function, 0xfff5 );
 SYSTEM_CALL( object_to_return, 0xfff9 );
 SYSTEM_CALL( object_to_pass_to, 0xfff8 );
 SYSTEM_CALL( duplicate_to_pass_to, 0xfff7 );
