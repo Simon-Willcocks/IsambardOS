@@ -88,6 +88,8 @@ void emmc_interrupt()
 
 enum { SD_Card, UART0, UART1, USB_HCD, I2C0, I2C1, I2C2, SPI, CCP2TX, Unknown_RPi4_1, Unknown_RPi4_2 } device_ids;
 
+// This single_mailbox_tag_access interface is incredibly thread UNSAFE!
+// Updating a structure without a lock...
 static bool device_exists( uint32_t id )
 {
   mailbox_request_buffer[0] = id;
@@ -102,8 +104,17 @@ static bool power_on_sd_host()
   if (0 == (mailbox_request_buffer[1] & 1)) {
     // Is off.
     mailbox_request_buffer[0] = SD_Card;
-    mailbox_request_buffer[1] = 3; // Power on, and wait.
+    mailbox_request_buffer[1] = 1; // Power on, no wait.
     single_mailbox_tag_access( 0x00028001, 8 );
+    // How long will this take?
+    mailbox_request_buffer[0] = SD_Card;
+    single_mailbox_tag_access( 0x00020002, 8 );
+
+    sleep_ms( mailbox_request_buffer[1] + 1 ); // +1 just in case
+
+    // Is on?
+    mailbox_request_buffer[0] = SD_Card;
+    single_mailbox_tag_access( 0x00020001, 8 );
     return 1 == mailbox_request_buffer[1];
   }
   return true;
@@ -466,7 +477,6 @@ void show_page_thread()
   tnd = TRIVIAL_NUMERIC_DISPLAY_from_integer_register( s.r );
 
   wake_thread( initialisation_thread );
-  sleepy_thread1();
 
   TRIVIAL_NUMERIC_DISPLAY__set_page_to_show( tnd, test_memory, NUMBER_from_pointer( mapped_memory ) );
   for (;;) {
@@ -490,14 +500,15 @@ void sleepy_thread( int delay, int y )
   uint32_t w = 0;
   uint64_t d = 0;
 #define SHOW_D( name, dy ) asm ( "mrs %[d], "#name : [d] "=r" (d) ); \
-  TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 100 ), N( y + dy ), N( d ), N( 0xfff0f0f0 ) ); asm ( "svc 0" );
+  TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1600 ), N( y + dy ), N( d ), N( 0xfff0f0f0 ) ); asm ( "svc 0" );
 
 #define SHOW_W( name, dy ) asm ( "mrs %[w], "#name : [w] "=r" (w) ); \
-  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 100 ), N( y + dy ), N( w ), N( 0xfff0f0f0 ) ); asm ( "svc 0" );
+  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( y + dy ), N( w ), N( 0xfff0f0f0 ) ); asm ( "svc 0" );
+
+  SHOW_W( CNTFRQ_EL0, 0 );
+  uint32_t freq = w;
 
   for (uint32_t t = 0;;t++) {
-  SHOW_W( CNTFRQ_EL0, 0 );
-
   SHOW_W( CNTV_CTL_EL0, 10 );
   SHOW_D( CNTV_TVAL_EL0, 20 ); // Counts down
   SHOW_D( CNTV_CVAL_EL0, 30 );
@@ -506,16 +517,19 @@ void sleepy_thread( int delay, int y )
   SHOW_D( CNTP_TVAL_EL0, 50 ); // Counts down
   SHOW_D( CNTP_CVAL_EL0, 60 );
 
-  SHOW_D( CNTPCT_EL0, 70 ); // Counts up
+  SHOW_D( CNTPCT_EL0, 70 ); // Counts up, equal to the QA7 local timer value NOT at 19200000Hz, though... 1MHz
+
+  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( y + 80 ), N( d / freq ), N( 0xfff0f0f0 ) );
 
     TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( y ), N( DRIVER_SYSTEM__get_core_interrupts_count( driver_system() ).r ), N( 0xfff0f0f0 ) );
     TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( y ), N( t ), N( 0xfff0f0f0 ) );
     TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1780 ), N( y ), N( DRIVER_SYSTEM__get_core_timer_value( driver_system() ).r ), N( 0xfff0f0f0 ) );
     asm ( "svc 0" );
-    yield();
 
     // y = 8 + ((y + 8) % 1000);
-    //sleep_ms( delay );
+    static int n = 0;
+    TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 800 ), N( 800 ), N( n++ ), N( 0xfff0f0f0 ) );
+    sleep_ms( delay );
   }
 }
 
@@ -527,40 +541,40 @@ void sleepy_thread1()
 void go_sleepy_thread1()
 {
   static uint64_t __attribute__(( aligned(16) )) tmp_stack[64];
-  create_thread( go_sleepy_thread1, &tmp_stack[64] );
+  create_thread( sleepy_thread1, &tmp_stack[64] );
 }
 
 void sleepy_thread2()
 {
-  sleepy_thread( 4000, 50 );
+  sleepy_thread( 4000, 240 );
 }
 
 void go_sleepy_thread2()
 {
   static uint64_t __attribute__(( aligned(16) )) tmp_stack[64];
-  create_thread( go_sleepy_thread2, &tmp_stack[64] );
+  create_thread( sleepy_thread2, &tmp_stack[64] );
 }
 
 void sleepy_thread3()
 {
-  sleepy_thread( 500, 60 );
+  sleepy_thread( 500, 440 );
 }
 
 void go_sleepy_thread3()
 {
   static uint64_t __attribute__(( aligned(16) )) tmp_stack[64];
-  create_thread( go_sleepy_thread3, &tmp_stack[64] );
+  create_thread( sleepy_thread3, &tmp_stack[64] );
 }
 
 void sleepy_thread4()
 {
-  sleepy_thread( 50, 70 );
+  sleepy_thread( 50, 640 );
 }
 
 void go_sleepy_thread4()
 {
   static uint64_t __attribute__(( aligned(16) )) tmp_stack[64];
-  create_thread( go_sleepy_thread4, &tmp_stack[64] );
+  create_thread( sleepy_thread4, &tmp_stack[64] );
 }
 
 void expose_emmc()
@@ -571,14 +585,16 @@ void expose_emmc()
 
   wait_until_woken(); // While debugging, this means that the frame buffer had been initialised, so we're the only driver using the mailbox
 
-  //go_sleepy_thread1();
-  //go_sleepy_thread2();
-  //go_sleepy_thread3();
-  //go_sleepy_thread4();
+    TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 800 ), N( 900 ), N( 0 ), N( 0xfff0f0f0 ) );
+  go_sleepy_thread1();
+  go_sleepy_thread2();
+  go_sleepy_thread3();
+  go_sleepy_thread4();
+    TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 800 ), N( 900 ), N( 1 ), N( 0xfff0f0f0 ) );
 
   debug_progress = 1;
 
-  wait_until_woken();
+    TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 800 ), N( 900 ), N( 0x1111 ), N( 0xfff0f0f0 ) );
 
   EMMC emmc = { .p = &emmc_service_singleton.object };
   SERVICE obj = EMMC_SERVICE_to_pass_to( system.r, emmc );

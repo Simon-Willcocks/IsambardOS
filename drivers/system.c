@@ -125,20 +125,23 @@ extern uint64_t stack_top;
  
 void thread_exit()
 {
-        for (;;) { asm ( "mov x0, #0\n\tsvc 0xfff5" ); } // FIXME This code has no stack.
+        for (;;) { asm ( "mov x0, #0\n\tmov x1, #0\n\tsvc 0xfff5" ); } // FIXME This code has no stack.
   // Put into a container, for re-starting later...?
   //for (;;) { wait_until_woken(); asm ( "brk 12" ); }
 }
 
 #define INT_STACK_SIZE 64
 
+static uint32_t ticks_per_millisecond = 0;
+
 extern struct {
   uint64_t number;
+  uint64_t last_cval;
   uint64_t interrupts_count;
   uint64_t unidentified_interrupts_count;
   uint64_t __attribute__(( aligned( 16 ) )) interrupt_handler_stack[INT_STACK_SIZE];
   // The rest is idle thread stack
-} volatile this_core; // Core-specific information
+} this_core; // Core-specific information
 
 Object memory_manager = 0;
 
@@ -221,6 +224,8 @@ extern struct {
   };
 } volatile __attribute__(( aligned( 4096 ) )) device_pages;
 
+uint32_t all_interrupts  = 0;
+
 static inline void board_call_interrupt_handlers()
 {
   static uint64_t volatile interrupts_count = 0;
@@ -232,7 +237,7 @@ static inline void board_call_interrupt_handlers()
   // dealt with in the driver.
 
   uint32_t sources = device_pages.QA7.Core_IRQ_Source[this_core.number];
-
+all_interrupts |= sources;
   static uint32_t interrupts_handled[12] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 };
 
   if (sources == 0) {
@@ -248,6 +253,14 @@ interrupts_handled[0]+= 0x100000;
 
   memory_read_barrier(); // Completed our reads of device_pages.QA7
 
+#if 1
+  if (0 != (sources & (15 << 0))) { // ANY TIMER TICK! This could be a bug in qemu? Timer interrupt is 1<<1
+    this_core.last_cval += ticks_per_millisecond;
+    asm ( "msr CNTP_CVAL_EL0, %[d]" : : [d] "r" (this_core.last_cval) );
+    ms_ticks ++;
+    gate_function( 0, 0 ); // Special case for interrupt handler thread
+  }
+#else
   if (0 != (sources & (1 << 11))) {
     memory_write_barrier(); // About to write to device_pages.QA7
     device_pages.QA7.Local_timer_write_flags = (1 << 31);
@@ -257,6 +270,7 @@ asm( "svc 0" );
     // QA7 is shared between cores, does that mean only one core will receive this interrupt?
     // FIXME
   }
+#endif
 
   for (int i = 0; sources != 0 && i < 12; i++) {
     if (0 != ((1 << i) & sources)) {
@@ -416,6 +430,7 @@ NUMBER MapValue__DRIVER_SYSTEM__get_ms_timer_ticks( MapValue o )
 NUMBER MapValue__DRIVER_SYSTEM__get_core_timer_value( MapValue o )
 {
   o = o;
+  return NUMBER_from_integer_register( all_interrupts );
   return NUMBER_from_integer_register( core_timer_value() );
 }
 
@@ -617,23 +632,39 @@ void create_interrupt_handler_thread()
 
 static void start_ms_timer()
 {
+  memory_write_barrier(); // About to write to device_pages.QA7
   device_pages.QA7.Local_Interrupt_routing0 = 0; // Direct local timer interrupt to CPU 0 IRQ
 
   //device_pages.QA7.timer_prescaler = 0x06AAAAAB; // 19.2... somethings
   device_pages.QA7.timer_prescaler = 0x80000000;
-  device_pages.QA7.control = (1 << 8); // Timer enable (increment in ones)
+  device_pages.QA7.control = (1 << 8); // Timer associated with APB clock (not Crystal clock) (increment in ones)
 
   // Reasonably close to 1ms ticks: 19200000/500
   // device_pages.QA7.Local_timer_control_and_status = (1 << 29) | (1 << 28) | 19200000/500; // Enable timer, interrupt.
   // device_pages.QA7.Local_timer_control_and_status = (1 << 29) | (1 << 28) | ((1 << 28) - 1); // Enable timer, and interrupt. Longest timeout
 
-  device_pages.QA7.Local_timer_control_and_status = (1 << 29) | (1 << 28) | 384; // Enable timer, interrupt.  ~10x per second?
+  // device_pages.QA7.Local_timer_control_and_status = (1 << 29) | (1 << 28) | 100000; // Enable timer, interrupt.  ~10x per second?
+  device_pages.QA7.Local_timer_control_and_status = (1 << 28) | 100000; // Enable timer, no interrupt
   device_pages.QA7.Local_timer_write_flags = (1 << 31) | (1 << 30); // Clear IRQ and load timer
 
-  device_pages.QA7.Core_IRQ_Source[0] = 0x3ff; // (1 << 8);
-  device_pages.QA7.Core_IRQ_Source[1] = 0x3ff; // (1 << 8);
-  device_pages.QA7.Core_IRQ_Source[2] = 0x3ff; // (1 << 8);
-  device_pages.QA7.Core_IRQ_Source[3] = 0x3ff; // (1 << 8);
+  device_pages.QA7.Core_IRQ_Source[0] = 0xffd; // (1 << 8);
+  device_pages.QA7.Core_IRQ_Source[1] = 0x00d; // (1 << 8);
+  device_pages.QA7.Core_IRQ_Source[2] = 0x00d; // (1 << 8);
+  device_pages.QA7.Core_IRQ_Source[3] = 0x00d; // (1 << 8);
+
+  device_pages.QA7.Core_timers_Interrupt_control[this_core.number] = 1; // nCNTPSIRQ IRQ enable
+  device_pages.QA7.Core_timers_Interrupt_control[this_core.number] = 15; // All timers IRQ enable FIXME
+
+  // Establish 1ms timer, using generic timer (implemented in QEMU, unlike the above)
+  uint64_t now;
+  uint32_t frequency;
+  asm ( "mrs %[freq], CNTFRQ_EL0" : [freq] "=r" (frequency) );
+  ticks_per_millisecond = frequency / 1000;
+
+  asm ( "mrs %[d], CNTPCT_EL0" : [d] "=r" (now) );
+  this_core.last_cval = now + ticks_per_millisecond; // Match in a millisecond
+  asm ( "msr CNTP_CVAL_EL0, %[d]" : : [d] "r" (this_core.last_cval) );
+  asm ( "msr CNTP_CTL_EL0, %[w]" : : [w] "r" (5) ); // Enable interrupts
 }
 
 void __attribute__(( noreturn )) idle_thread_entry( Object system_interface,
@@ -668,7 +699,7 @@ void __attribute__(( noreturn )) idle_thread_entry( Object system_interface,
   if (core_number == 0) {
     // Other timers will be available, but 1ms seems reasonable for timing events,
     // considering a 2MHz computer used 10ms ticks, in 1982.
-    //start_ms_timer();
+    start_ms_timer();
   }
 
   for (;;) {

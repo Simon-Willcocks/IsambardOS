@@ -1,6 +1,6 @@
 
 #ifndef WITHOUT_GATE
-static inline thread_switch handle_svc_gate( Core *core, thread_context *thread, int number )
+static inline thread_switch handle_svc_gate( Core *core, thread_context *thread )
 {
   thread_switch result = { .then = thread, .now = thread }; // By default, stay with the same thread
 
@@ -97,7 +97,7 @@ static inline thread_switch handle_svc_gate( Core *core, thread_context *thread,
         insert_new_thread_after_old( release_thread, thread );
         release_thread->gate = 0;
         if (release_thread->regs[16] != 0) {
-          // In a timeout list
+          // The blocked thread is in a timeout list
           thread_context **prevp = (thread_context **) release_thread->regs[16];
           thread_context *next = (thread_context *) release_thread->regs[17];
           *prevp = next;
@@ -125,8 +125,9 @@ static inline thread_switch handle_svc_gate( Core *core, thread_context *thread,
 #endif
 
 #ifndef WITHOUT_INTERFACE_CREATION
-static inline thread_switch handle_svc_duplicate_to_return( Core *core, thread_context *thread, int number )
+static inline thread_switch handle_svc_duplicate_to_return( Core *core, thread_context *thread )
 {
+  core = core;
   Interface *e = obtain_interface();
 
   Interface *interface = interface_from_index( thread->regs[0] );
@@ -138,11 +139,14 @@ static inline thread_switch handle_svc_duplicate_to_return( Core *core, thread_c
   e->object.as_number = interface->object.as_number;
 
   thread->regs[0] = index_from_interface( e );
+
+  thread_switch result = { .then = thread, .now = thread }; // By default, stay with the same thread
   return result;
 }
 
-static inline thread_switch handle_svc_duplicate_to_pass_to( Core *core, thread_context *thread, int number )
+static inline thread_switch handle_svc_duplicate_to_pass_to( Core *core, thread_context *thread )
 {
+  core = core;
   Interface *e = obtain_interface();
 
   // FIXME lots of testing!
@@ -159,11 +163,14 @@ static inline thread_switch handle_svc_duplicate_to_pass_to( Core *core, thread_
   e->object.as_number = interface->object.as_number;
 
   thread->regs[0] = index_from_interface( e );
+
+  thread_switch result = { .then = thread, .now = thread }; // By default, stay with the same thread
   return result;
 }
 
-static inline thread_switch handle_svc_interface_to_pass_to( Core *core, thread_context *thread, int number )
+static inline thread_switch handle_svc_interface_to_pass_to( Core *core, thread_context *thread )
 {
+  core = core;
   Interface *e = obtain_interface();
 
   // FIXME lots of testing!
@@ -178,11 +185,14 @@ static inline thread_switch handle_svc_interface_to_pass_to( Core *core, thread_
   e->object.as_number = thread->regs[2];
 
   thread->regs[0] = index_from_interface( e );
+
+  thread_switch result = { .then = thread, .now = thread }; // By default, stay with the same thread
   return result;
 }
 
-static inline thread_switch handle_svc_interface_to_return( Core *core, thread_context *thread, int number )
+static inline thread_switch handle_svc_interface_to_return( Core *core, thread_context *thread )
 {
+  core = core;
   Interface *e = obtain_interface();
 
   e->user = thread->stack_pointer[0].caller_map;
@@ -191,6 +201,8 @@ static inline thread_switch handle_svc_interface_to_return( Core *core, thread_c
   e->object.as_number = thread->regs[1];
 
   thread->regs[0] = index_from_interface( e );
+
+  thread_switch result = { .then = thread, .now = thread }; // By default, stay with the same thread
   return result;
 }
 #endif
@@ -198,8 +210,10 @@ static inline thread_switch handle_svc_interface_to_return( Core *core, thread_c
 #ifndef WITHOUT_LOCKS
 static thread_context *blocked = 0; // A fake list head, for creating blocked lists
 
-static inline thread_switch handle_svc_wait_for_lock( Core *core, thread_context *thread, int number )
+static inline thread_switch handle_svc_wait_for_lock( Core *core, thread_context *thread )
 {
+  thread_switch result = { .then = thread, .now = thread }; // By default, stay with the same thread
+
   uint64_t x17 = thread->regs[17];
   uint64_t x18 = thread->regs[18];
   if (address_is_user_writable( x17 )
@@ -213,10 +227,18 @@ static inline thread_switch handle_svc_wait_for_lock( Core *core, thread_context
     do {
       write_failed = false; // until proven otherwise
 
+#ifdef DEBUG_ASM
+      lock_value = LDXR( x17 );
+#else
       asm volatile ( "ldxr %[lv], [%[l]]" : [lv] "=r" (lock_value) : [l] "r" (x17) );
+#endif
 
       if (lock_value == 0) {
+#ifdef DEBUG_ASM
+        write_failed = STXR( x17, x18 );
+#else
         asm volatile ( "stxr %w[w], %[lv], [%[l]]" : [w] "=&r" (write_failed) : [lv] "r" (x18), [l] "r" (x17) );
+#endif
 
         if (!write_failed && result.now != thread) {
           // We've blocked ourselves, but the lock owner has released the lock, thinking there was no-one blocked
@@ -234,7 +256,11 @@ static inline thread_switch handle_svc_wait_for_lock( Core *core, thread_context
       }
       else if (lock_value == x18) {
         // Will this ever happen?
+#ifdef DEBUG_ASM
+        CLREX();
+#else
         asm volatile ( "clrex" ); // We won't be writing to the lock
+#endif
       }
       else {
               // What happens on second go through?
@@ -261,11 +287,19 @@ static inline thread_switch handle_svc_wait_for_lock( Core *core, thread_context
           insert_thread_as_head( &blocked, thread );
           lock_value |= x18 << 32;
 
+#ifdef DEBUG_ASM
+          write_failed = STXR( x17, lock_value );
+#else
           asm volatile ( "stxr %w[w], %[lv], [%[l]]" : [w] "=&r" (write_failed) : [lv] "r" (lock_value), [l] "r" (x17) );
+#endif
         }
         else {
           // If there is already a (list of) blocked thread(s), the lock value doesn't change.
+#ifdef DEBUG_ASM
+          CLREX();
+#else
           asm volatile ( "clrex" ); // We won't be writing to the lock
+#endif
 
           thread_context *first_blocked_thread = thread_from_code( blocked_thread_code );
           blocked = first_blocked_thread;
@@ -280,7 +314,7 @@ static inline thread_switch handle_svc_wait_for_lock( Core *core, thread_context
         }
       }
     } while (write_failed);
-    asm volatile ( "dsb sy" );
+    dsb();
   }
   else {
     BSOD( __COUNTER__ ); // Not writable, or thread code invalid, blocking
@@ -289,8 +323,10 @@ static inline thread_switch handle_svc_wait_for_lock( Core *core, thread_context
   return result;
 }
 
-static inline thread_switch handle_svc_release_lock( Core *core, thread_context *thread, int number )
+static inline thread_switch handle_svc_release_lock( Core *core, thread_context *thread )
 {
+  thread_switch result = { .then = thread, .now = thread }; // By default, stay with the same thread
+
   uint64_t x17 = thread->regs[17];
   uint64_t x18 = thread->regs[18];
   if (address_is_user_writable( x17 )
@@ -322,17 +358,24 @@ static inline thread_switch handle_svc_release_lock( Core *core, thread_context 
       }
       thread_context *first_blocked_thread = thread_from_code( blocked_thread_code );
 
-      blocked = first_blocked_thread; // Fake list head for all blocked threads
+      if (first_blocked_thread == first_blocked_thread->next) {
+        // Only one blocked thread
+      }
+      else {
+        blocked = first_blocked_thread->next; // Fake list head for all blocked threads
 
-      remove_thread( first_blocked_thread );
-      new_value |= (((uint64_t) thread_code( blocked )) << 32);
+        remove_thread( first_blocked_thread ); // Not at head of list
+        new_value |= (((uint64_t) thread_code( blocked )) << 32);
+      }
+
       result.now = first_blocked_thread;
-      // The unblocked thread gets a go...
+
+      // The newly unblocked thread gets a go...?
       insert_thread_as_head( &core->runnable, result.now );
     }
 
     *(uint64_t*) x17 = new_value;
-    asm volatile ( "dsb sy" );
+    dsb();
     // TODO release kernel lock
   }
   else {
