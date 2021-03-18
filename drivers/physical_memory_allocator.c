@@ -4,9 +4,6 @@
 
 #include "drivers.h"
 
-unsigned long long stack_lock = 0;
-unsigned long long __attribute__(( aligned( 16 ) )) stack[STACK_SIZE] = { 0x33333333 }; // Just a marker
-
 // The Memory Manager driver is the only code in the system that can access all memory.
 // It runs in 1 4k page of code, plus 1 4k page of data.
 // All memory is accessible to it with virtual matching physical address, uncached

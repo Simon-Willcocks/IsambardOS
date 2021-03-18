@@ -4,6 +4,8 @@ if [ ! -e tools/interfaces -o tools/interfaces.c -nt tools/interfaces ] ; then
   gcc tools/interfaces.c -o tools/interfaces && ln -sf interfaces tools/server && ln -sf interfaces tools/client
 fi
 
+rm -f kernel8.dump kernel8.elf sdfat/kernel8.img built_drivers/* include/interfaces/client/* include/interfaces/provider/*
+
 (
   cd interfaces
   for i in *
@@ -16,8 +18,6 @@ fi
 )
 
 TARGET=aarch64-none-elf-
-
-rm -f kernel8.dump kernel8.elf sdfat/kernel8.img built_drivers/*
 
 OPTIMISATION="-Os"
 

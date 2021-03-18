@@ -11,9 +11,6 @@
 ISAMBARD_INTERFACE( FRAME_BUFFER )
 #include "interfaces/client/FRAME_BUFFER.h"
 
-unsigned long long stack_lock = 0;
-unsigned long long __attribute__(( aligned( 16 ) )) stack[STACK_SIZE] = { 0x33333333 }; // Just a marker
-
 static const uint32_t width = 1920;
 static const uint32_t height = 1080;
 static const uint32_t vwidth = width;
@@ -238,18 +235,16 @@ uint32_t page_start = 0;
 uint64_t tnd_stack_lock = 0;
 struct {
   uint64_t stack[64];
-} tnd_stack = { { 0x6666666666 } };
+} __attribute__(( aligned ( 16 ) )) tnd_stack = { { 0x6666666666 } };
 
 typedef NUMBER TND;
 
 ISAMBARD_INTERFACE( TRIVIAL_NUMERIC_DISPLAY )
 
 #include "interfaces/provider/TRIVIAL_NUMERIC_DISPLAY.h"
-#include "interfaces/provider/SERVICE.h"
 
 ISAMBARD_TRIVIAL_NUMERIC_DISPLAY__SERVER( TND )
-ISAMBARD_SERVICE__SERVER( TND )
-ISAMBARD_PROVIDER( TND, AS_TRIVIAL_NUMERIC_DISPLAY( TND )  ; AS_SERVICE( TND ) )
+ISAMBARD_PROVIDER( TND, AS_TRIVIAL_NUMERIC_DISPLAY( TND ) )
 ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( TND, tnd_stack_lock, tnd_stack, 64 * 8 )
 
 void TND__TRIVIAL_NUMERIC_DISPLAY__show_4bits( TND o, NUMBER x, NUMBER y, NUMBER value, NUMBER colour )
@@ -297,34 +292,12 @@ void TND__TRIVIAL_NUMERIC_DISPLAY__show_page( TND o )
 
 void entry()
 {
-  SERVICE fb_server = { .r = 0 };
-
-  do {
-    fb_server = get_service( "Frame Buffer" );
-    if (fb_server.r == 0) yield(); // FIXME add timeout to get_service
-  } while (fb_server.r == 0);
-
-  // ASSUMPTION FIXME
-  FRAME_BUFFER fb = FRAME_BUFFER_from_integer_register( fb_server.r );
+  FRAME_BUFFER fb = FRAME_BUFFER__get_service( "Frame Buffer", 0 );
 
   PHYSICAL_MEMORY_BLOCK screen_page = FRAME_BUFFER__get_frame_buffer( fb );
   DRIVER_SYSTEM__map_at( driver_system(), screen_page, NUMBER_from_integer_register( mapped_address ) );
 
-  SERVICE obj = TND_SERVICE_to_pass_to( system.r, NUMBER_from_integer_register( 0 ) );
-  register_service( "Trivial Numeric Display", obj );
-/*
-  uint64_t cache_line_size;
-  asm volatile ( "mrs %[s], DCZID_EL0" : [s] "=r" (cache_line_size) );
-  show_qword( 0, 1008, cache_line_size, 0xffffffff );
-  show_qword( 160, 1008, 4 << (cache_line_size & 0xf), 0xffffffff );
-
-  static uint64_t n = 0;
-  for (n = 0;;n++) {
-    show_qword( 0, 1024, n, Blue );
-    show_page( (void*) 0x1000 );
-    asm ( "svc 0" );
-    yield();
-  }
-*/
+  TND tnd = {};
+  TND_TRIVIAL_NUMERIC_DISPLAY_register_service( "Trivial Numeric Display", tnd );
 }
 

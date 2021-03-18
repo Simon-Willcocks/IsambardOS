@@ -137,7 +137,7 @@ void print_typedef( char *type )
     printf( "#ifndef %s_DEFINED\n", type );
     printf( "#define %s_DEFINED\n", type );
     printf( "typedef struct { integer_register r; } %s;\n", type );
-    printf( "static inline %s %s_from_integer_register( integer_register r ) { %s result = { .r = r }; return result; }\n", type, type, type );
+    printf( "static inline %s %s_from_integer_register( integer_register r ) __attribute__ ((pure)) { %s result = { .r = r }; return result; }\n", type, type, type );
     printf( "#endif\n" );
     if (p - printed_types >= (sizeof( printed_types ) / sizeof( printed_types[0] )-1)) {
       printf( "// Too many unique types, modify tools/interfaces.c!\n" );
@@ -277,6 +277,19 @@ void export_client_code()
     unsigned crc = crc32( interface_name, strlen( interface_name ), 0 );
     crc = crc32( "__", 2, crc );
 
+    if (0 != strcmp( interface_name, "SYSTEM" )) {
+            // FIXME Implement timeouts in system driver, but release the thread's resources while waiting...
+      printf( "static inline %s %s__get_service( const char *name, integer_register timeout )\n", interface_name, interface_name );
+      printf( "{\n" );
+      printf( "  NUMBER result = {};\n" );
+      printf( "  do {\n" );
+      printf( "    result = SYSTEM__get_service( system, name_code( name ), NUMBER_from_integer_register( 0x%08x ), NUMBER_from_integer_register( 0 ) );\n", crc );
+      printf( "    if (result.r == 0 && --timeout > 0) sleep_ms( 1 );\n" );
+      printf( "  } while (timeout > 0 && result.r == 0);\n" );
+      printf( "  return %s_from_integer_register( result.r );\n", interface_name );
+      printf( "}\n" );
+    }
+
     while (l < ends[i]) {
       split( interface_name, lines[l++], export_interface_routine_client_code, crc );
     }
@@ -345,10 +358,10 @@ void export_server_code()
     printf( "integer_register c##_call_handler( c o, integer_register call, integer_register p1, integer_register p2, integer_register p3, integer_register p4 ); \\\n" );
     printf( "extern void c##_veneer(); \\\n" ); // Implementation provided by a macro from isambard_client.h
 
-    printf( "static inline %s c##_%s_duplicate_to_return( c o ) { %s result; result.r = duplicate_to_return( (integer_register) o.r ); return result; } \\\n", interface_name, interface_name, interface_name );
-    printf( "static inline %s c##_%s_duplicate_to_pass_to( integer_register target, c o ) { %s result; result.r = duplicate_to_pass_to( target, (integer_register) o.r ); return result; } \\\n", interface_name, interface_name, interface_name );
-    printf( "static inline %s c##_%s_to_return( c o ) { %s result; result.r = object_to_return( c##_veneer, (integer_register) o.r ); return result; } \\\n", interface_name, interface_name, interface_name );
-    printf( "static inline %s c##_%s_to_pass_to( integer_register target, c o ) { %s result; result.r = object_to_pass_to( target, c##_veneer, (integer_register) o.r ); return result; }\n\n", interface_name, interface_name, interface_name );
+    printf( "static inline void c##_%s_register_service( const char *name, c o ) { SYSTEM__register_service( system, name_code( name ), NUMBER_from_integer_register( object_to_pass_to( system.r, c##_veneer, o.r ) ), NUMBER_from_integer_register( 0x%08x ) ); } \\\n", interface_name, crc );
+
+    printf( "static inline %s c##_%s_to_return( c o ) { %s result; result.r = object_to_return( c##_veneer, o.r ); return result; } \\\n", interface_name, interface_name, interface_name );
+    printf( "static inline %s c##_%s_to_pass_to( integer_register target, c o ) { %s result; result.r = object_to_pass_to( target, c##_veneer, o.r ); return result; }\n\n", interface_name, interface_name, interface_name );
 
     l = interfaces[i] + 1;
 

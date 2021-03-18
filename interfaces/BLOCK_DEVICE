@@ -1,2 +1,3 @@
 interface BLOCK_DEVICE
+read_4k_pages IN dest: PHYSICAL_MEMORY_BLOCK, start: NUMBER, count: NUMBER
 end

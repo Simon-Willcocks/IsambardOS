@@ -1,6 +1,13 @@
 #include "drivers.h"
 
+#ifndef STACK_SIZE
+#define STACK_SIZE 64
+#endif
+#define STACK_SIZE_STRINGX(s) #s
+#define STACK_SIZE_STRING(s) STACK_SIZE_STRINGX(s)
+
 #ifndef SYSTEM_DRIVER
+
 // The stack used by the driver initialisation thread is not locked; the initialisation
 // code will only be called once, and the stack can be treated as free memory, once the
 // initialisation routine has returned.
@@ -20,6 +27,8 @@ asm ( ".section .init"
 #endif
 
 SYSTEM system = { .r = 0 }; // Initialised by _start code
+
+integer_register __attribute__(( aligned( 16 ) )) stack[STACK_SIZE];
 
 #define GLOBAL_FUNCTION( name ) "\n.global " #name "\n.type " #name ", function\n" #name ":"
 

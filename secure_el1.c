@@ -1178,16 +1178,18 @@ static inline thread_switch SEL1_LOWER_AARCH64_SYNC_CODE_may_change_map( Core *c
       }
     case 0b100110:
       {
-        // SP alignment fault
-        BSOD( 3 );
-        BSOD( __COUNTER__ );
+        BSOD( 3 ); // SP alignment fault
+        BSOD( __COUNTER__ ); // SP alignment fault
       }
       break;
     case 0b011000:
       {
-        // Register access at EL0, e.g. CNTP_TVAL_EL0
-        // We don't do that yet. Perhaps it can be turned on in SCTLR_EL1?
-        BSOD( __COUNTER__ );
+        BSOD( __COUNTER__ ); // Register access at EL0, e.g. CNTP_TVAL_EL0
+      }
+      break;
+    case 0b100010:
+      {
+        BSOD( __COUNTER__ ); // Misaligned PC
       }
       break;
     case 0b111100: // BRK in Aarch64
@@ -1207,7 +1209,18 @@ static inline thread_switch SEL1_LOWER_AARCH64_SYNC_CODE_may_change_map( Core *c
       break;
     default:
       {
-        BSOD( __COUNTER__ );
+        // switch ((esr >> 29) & 0x7) { // Top bits
+        switch ((esr >> 26) & 0x7) { // Lower 3 bits
+        case 0: BSOD( 5 ); break;
+        case 1: BSOD( 6 ); break;
+        case 2: BSOD( 7 ); break;
+        case 3: BSOD( 8 ); break;
+        case 4: BSOD( 9 ); break;
+        case 5: BSOD( 10 ); break;
+        case 6: BSOD( 11 ); break;
+        case 7: BSOD( 12 ); break;
+        }
+        BSOD( __COUNTER__ ); // Unknown ESR
       }
     };
   }

@@ -436,7 +436,6 @@ static struct emmc_service_object_container __attribute__(( aligned(16) )) emmc_
 
 ISAMBARD_INTERFACE( BLOCK_DEVICE )
 #include "interfaces/provider/BLOCK_DEVICE.h"
-#include "interfaces/provider/SERVICE.h"
 
 ISAMBARD_INTERFACE( TRIVIAL_NUMERIC_DISPLAY )
 
@@ -445,13 +444,8 @@ ISAMBARD_INTERFACE( TRIVIAL_NUMERIC_DISPLAY )
 typedef union { integer_register r; emmc_service_object *p; } EMMC;
 
 ISAMBARD_BLOCK_DEVICE__SERVER( EMMC )
-ISAMBARD_SERVICE__SERVER( EMMC )
-ISAMBARD_PROVIDER( EMMC, AS_BLOCK_DEVICE( EMMC ) ; AS_SERVICE( EMMC ) )
+ISAMBARD_PROVIDER( EMMC, AS_BLOCK_DEVICE( EMMC ) )
 ISAMBARD_PROVIDER_UNLOCKED_PER_OBJECT_STACK( EMMC )
-
-struct {
-  uint64_t stack[64];
-} __attribute__(( aligned(16) )) tmp_stack;
 
 PHYSICAL_MEMORY_BLOCK test_memory;
 uint32_t *mapped_memory = (void*) (0x10000);
@@ -467,16 +461,11 @@ void show_page_thread()
   mapped_memory[0] = 0;
   mapped_memory[1] = 0;
 
-  SERVICE s;
-  do {
-    s = get_service( "Trivial Numeric Display" );
-    if (s.r == 0) yield();
-    mapped_memory[0] ++;
-  } while (s.r == 0);
-
-  tnd = TRIVIAL_NUMERIC_DISPLAY_from_integer_register( s.r );
+  tnd = TRIVIAL_NUMERIC_DISPLAY__get_service( "Trivial Numeric Display", 20 );
 
   wake_thread( initialisation_thread );
+
+  if (tnd.r == 0) { return; }
 
   TRIVIAL_NUMERIC_DISPLAY__set_page_to_show( tnd, test_memory, NUMBER_from_pointer( mapped_memory ) );
   for (;;) {
@@ -492,113 +481,27 @@ void show_page_thread()
   }
 }
 
-void sleepy_thread( int delay, int y )
+void start_show_page_thread()
 {
-  
-  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 100 ), N( y ), N( 0x11111111 ), N( 0xfff0f0f0 ) );
-    asm ( "svc 0" );
-  uint32_t w = 0;
-  uint64_t d = 0;
-#define SHOW_D( name, dy ) asm ( "mrs %[d], "#name : [d] "=r" (d) ); \
-  TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1600 ), N( y + dy ), N( d ), N( 0xfff0f0f0 ) ); asm ( "svc 0" );
+  static struct {
+    uint64_t stack[64];
+  } __attribute__(( aligned(16) )) stack = {};
 
-#define SHOW_W( name, dy ) asm ( "mrs %[w], "#name : [w] "=r" (w) ); \
-  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( y + dy ), N( w ), N( 0xfff0f0f0 ) ); asm ( "svc 0" );
-
-  SHOW_W( CNTFRQ_EL0, 0 );
-  uint32_t freq = w;
-
-  for (uint32_t t = 0;;t++) {
-  SHOW_W( CNTV_CTL_EL0, 10 );
-  SHOW_D( CNTV_TVAL_EL0, 20 ); // Counts down
-  SHOW_D( CNTV_CVAL_EL0, 30 );
-
-  SHOW_W( CNTP_CTL_EL0, 40 );
-  SHOW_D( CNTP_TVAL_EL0, 50 ); // Counts down
-  SHOW_D( CNTP_CVAL_EL0, 60 );
-
-  SHOW_D( CNTPCT_EL0, 70 ); // Counts up, equal to the QA7 local timer value NOT at 19200000Hz, though... 1MHz
-
-  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( y + 80 ), N( d / freq ), N( 0xfff0f0f0 ) );
-
-    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( y ), N( DRIVER_SYSTEM__get_core_interrupts_count( driver_system() ).r ), N( 0xfff0f0f0 ) );
-    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( y ), N( t ), N( 0xfff0f0f0 ) );
-    TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1780 ), N( y ), N( DRIVER_SYSTEM__get_core_timer_value( driver_system() ).r ), N( 0xfff0f0f0 ) );
-    asm ( "svc 0" );
-
-    // y = 8 + ((y + 8) % 1000);
-    static int n = 0;
-    TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 800 ), N( 800 ), N( n++ ), N( 0xfff0f0f0 ) );
-    sleep_ms( delay );
-  }
-}
-
-void sleepy_thread1()
-{
-  sleepy_thread( 50, 40 );
-}
-
-void go_sleepy_thread1()
-{
-  static uint64_t __attribute__(( aligned(16) )) tmp_stack[64];
-  create_thread( sleepy_thread1, &tmp_stack[64] );
-}
-
-void sleepy_thread2()
-{
-  sleepy_thread( 4000, 240 );
-}
-
-void go_sleepy_thread2()
-{
-  static uint64_t __attribute__(( aligned(16) )) tmp_stack[64];
-  create_thread( sleepy_thread2, &tmp_stack[64] );
-}
-
-void sleepy_thread3()
-{
-  sleepy_thread( 500, 440 );
-}
-
-void go_sleepy_thread3()
-{
-  static uint64_t __attribute__(( aligned(16) )) tmp_stack[64];
-  create_thread( sleepy_thread3, &tmp_stack[64] );
-}
-
-void sleepy_thread4()
-{
-  sleepy_thread( 50, 640 );
-}
-
-void go_sleepy_thread4()
-{
-  static uint64_t __attribute__(( aligned(16) )) tmp_stack[64];
-  create_thread( sleepy_thread4, &tmp_stack[64] );
+  create_thread( show_page_thread, (uint64_t*) ((&stack)+1) );
 }
 
 void expose_emmc()
 {
   initialisation_thread = this_thread;
 
-  create_thread( show_page_thread, (uint64_t*) ((&tmp_stack)+1) );
+  start_show_page_thread();
 
   wait_until_woken(); // While debugging, this means that the frame buffer had been initialised, so we're the only driver using the mailbox
-
-    TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 800 ), N( 900 ), N( 0 ), N( 0xfff0f0f0 ) );
-  go_sleepy_thread1();
-  go_sleepy_thread2();
-  go_sleepy_thread3();
-  go_sleepy_thread4();
-    TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 800 ), N( 900 ), N( 1 ), N( 0xfff0f0f0 ) );
-
+return;
   debug_progress = 1;
 
-    TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 800 ), N( 900 ), N( 0x1111 ), N( 0xfff0f0f0 ) );
-
   EMMC emmc = { .p = &emmc_service_singleton.object };
-  SERVICE obj = EMMC_SERVICE_to_pass_to( system.r, emmc );
-  register_service( "EMMC", obj );
+  EMMC_BLOCK_DEVICE_register_service( "EMMC", emmc );
 
   debug_progress = 2;
   for (int i = 0; i < 100; i++) { yield(); mapped_memory[2] = i; }
@@ -607,5 +510,9 @@ void expose_emmc()
   debug_progress = 20;
 
   wait_until_woken();
+}
+
+void EMMC__BLOCK_DEVICE__read_4k_pages( EMMC o, PHYSICAL_MEMORY_BLOCK dest, NUMBER start, NUMBER count )
+{
 }
 

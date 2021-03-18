@@ -80,14 +80,12 @@ void mailbox_interrupt()
 }
 
 #include "interfaces/provider/GPU_MAILBOX.h"
-#include "interfaces/provider/SERVICE.h"
 
 typedef NUMBER MBOX;
 typedef NUMBER Channel;
 
 ISAMBARD_GPU_MAILBOX__SERVER( MBOX )
-ISAMBARD_SERVICE__SERVER( MBOX )
-ISAMBARD_PROVIDER( MBOX, AS_GPU_MAILBOX( MBOX ) ; AS_SERVICE( MBOX ) )
+ISAMBARD_PROVIDER( MBOX, AS_GPU_MAILBOX( MBOX ) )
 
 ISAMBARD_GPU_MAILBOX_CHANNEL__SERVER( Channel )
 ISAMBARD_PROVIDER( Channel, AS_GPU_MAILBOX_CHANNEL( Channel ) )
@@ -101,8 +99,7 @@ ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( Channel, mailbox_stack_lock, mailbox_st
 
 void expose_gpu_mailbox()
 {
-  SERVICE obj = MBOX_SERVICE_to_pass_to( system.r, NUMBER_from_integer_register( 0 ) );
-  register_service( "Pi GPU Mailboxes", obj );
+  MBOX_GPU_MAILBOX_register_service( "Pi GPU Mailboxes", NUMBER_from_integer_register( 0 ) );
 }
 
 GPU_MAILBOX_CHANNEL MBOX__GPU_MAILBOX__claim_channel( MBOX o, NUMBER channel )

@@ -99,7 +99,7 @@ void entry()
 
   expose_gpu_mailbox();
 
-  GPU_MAILBOX factory = GPU_MAILBOX_from_integer_register( get_service( "Pi GPU Mailboxes" ).r );
+  GPU_MAILBOX factory = GPU_MAILBOX__get_service( "Pi GPU Mailboxes", -1ull );
   channel8 = GPU_MAILBOX__claim_channel( factory, NUMBER_from_integer_register( 8 ) );
 
   memory_write_barrier(); // About to write to devices.timer

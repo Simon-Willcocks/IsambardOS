@@ -125,53 +125,57 @@ static inline thread_switch handle_svc_gate( Core *core, thread_context *thread 
 #endif
 
 #ifndef WITHOUT_INTERFACE_CREATION
-static inline thread_switch handle_svc_duplicate_to_return( Core *core, thread_context *thread )
+static inline thread_switch new_interface( Core *core, thread_context *thread, interface_index user, interface_index provider, integer_register handler, integer_register value )
 {
   core = core;
   Interface *e = obtain_interface();
 
-  Interface *interface = interface_from_index( thread->regs[0] );
-  // FIXME lots of testing!
-
-  e->provider = interface->provider;
-  e->user = thread->stack_pointer[0].caller_map;
-  e->handler = interface->handler;
-  e->object.as_number = interface->object.as_number;
+  e->provider = provider;
+  e->user = user;
+  e->handler = handler;
+  e->object.as_number = value;
 
   thread->regs[0] = index_from_interface( e );
 
-  thread_switch result = { .then = thread, .now = thread }; // By default, stay with the same thread
+  // Stays with the same thread, for now. When an interface cannot be obtained, this thread will
+  // be paused while another allocates more space. Probably. Anyway, that will be done here.
+  thread_switch result = { .then = thread, .now = thread };
   return result;
+}
+
+static inline thread_switch handle_svc_duplicate_to_return( Core *core, thread_context *thread )
+{
+  Interface *interface = interface_from_index( thread->regs[0] );
+
+  if (interface->user != thread->current_map) {
+    BSOD( __COUNTER__ );
+  }
+
+  return new_interface( core, thread, thread->stack_pointer[0].caller_map, interface->provider, interface->handler, interface->object.as_number );
 }
 
 static inline thread_switch handle_svc_duplicate_to_pass_to( Core *core, thread_context *thread )
 {
-  core = core;
-  Interface *e = obtain_interface();
-
   // FIXME lots of testing!
   Interface *interface = interface_from_index( thread->regs[1] );
+
   if (interface->user != thread->current_map) {
     BSOD( __COUNTER__ );
   }
 
   Interface *target = interface_from_index( thread->regs[0] );
 
-  e->provider = interface->provider;
-  e->user = target->provider;
-  e->handler = interface->handler;
-  e->object.as_number = interface->object.as_number;
+  if (target->user != thread->current_map) {
+    BSOD( __COUNTER__ );
+  }
 
-  thread->regs[0] = index_from_interface( e );
-
-  thread_switch result = { .then = thread, .now = thread }; // By default, stay with the same thread
-  return result;
+  return new_interface( core, thread, target->provider, interface->provider, interface->handler, interface->object.as_number );
 }
 
 static inline thread_switch handle_svc_interface_to_pass_to( Core *core, thread_context *thread )
 {
-  core = core;
-  Interface *e = obtain_interface();
+  if (thread->regs[1] & 0x3)
+    asm ( "smc 13" );
 
   // FIXME lots of testing!
   Interface *interface = interface_from_index( thread->regs[0] );
@@ -179,31 +183,15 @@ static inline thread_switch handle_svc_interface_to_pass_to( Core *core, thread_
     BSOD( __COUNTER__ );
   }
 
-  e->user = interface->provider;
-  e->provider = thread->current_map;
-  e->handler = thread->regs[1];
-  e->object.as_number = thread->regs[2];
-
-  thread->regs[0] = index_from_interface( e );
-
-  thread_switch result = { .then = thread, .now = thread }; // By default, stay with the same thread
-  return result;
+  return new_interface( core, thread, interface->provider, thread->current_map, thread->regs[1], thread->regs[2] );
 }
 
 static inline thread_switch handle_svc_interface_to_return( Core *core, thread_context *thread )
 {
-  core = core;
-  Interface *e = obtain_interface();
+  if (thread->regs[0] & 0x3)
+    asm ( "smc 13" );
 
-  e->user = thread->stack_pointer[0].caller_map;
-  e->provider = thread->current_map;
-  e->handler = thread->regs[0];
-  e->object.as_number = thread->regs[1];
-
-  thread->regs[0] = index_from_interface( e );
-
-  thread_switch result = { .then = thread, .now = thread }; // By default, stay with the same thread
-  return result;
+  return new_interface( core, thread, thread->stack_pointer[0].caller_map, thread->current_map, thread->regs[0], thread->regs[1] );
 }
 #endif
 

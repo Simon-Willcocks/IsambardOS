@@ -94,9 +94,7 @@ asm (
 // List all the interfaces known to this file, and to those interfaces
 
 #include "interfaces/client/PHYSICAL_MEMORY_BLOCK.h"
-#include "interfaces/client/SERVICE.h"
 #include "interfaces/client/INTERRUPT_HANDLER.h"
-#include "interfaces/client/PHYSICAL_MEMORY_BLOCK.h"
 // ContiguousMemoryBlock implements this interface
 #include "interfaces/provider/PHYSICAL_MEMORY_BLOCK.h"
 // MapValue implements both of these interfaces
@@ -113,9 +111,6 @@ ISAMBARD_PROVIDER( MapValue, AS_DRIVER_SYSTEM( MapValue ); AS_SYSTEM( MapValue )
 ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( MapValue, map_stack_lock, map_stack, 64 * 8 )
 
 static volatile bool board_initialised = false;
-
-unsigned long long stack_lock = 0;
-unsigned long long __attribute__(( aligned( 16 ) )) stack[STACK_SIZE] = { 0x33333333 }; // Just a marker
 
 uint64_t __attribute__(( aligned( 16 ) )) map_stack[64];
 
@@ -153,8 +148,9 @@ static uint64_t vmb_lock = 0;
 static VirtualMemoryBlock vmbs[MAX_VMBS] = { 0 };
 
 struct service {
-  SERVICE service;
-  uint32_t name;
+  NUMBER service;
+  NUMBER type_crc;
+  NUMBER name_crc;
 };
 
 static struct service services[50] = { 0 };
@@ -253,24 +249,12 @@ interrupts_handled[0]+= 0x100000;
 
   memory_read_barrier(); // Completed our reads of device_pages.QA7
 
-#if 1
-  if (0 != (sources & (15 << 0))) { // ANY TIMER TICK! This could be a bug in qemu? Timer interrupt is 1<<1
+  if (0 != (sources & 2)) { // Timer interrupt
     this_core.last_cval += ticks_per_millisecond;
     asm ( "msr CNTP_CVAL_EL0, %[d]" : : [d] "r" (this_core.last_cval) );
     ms_ticks ++;
-    gate_function( 0, 0 ); // Special case for interrupt handler thread
+    gate_function( 0, 0 ); // Special case for interrupt handler thread, releases all threads that timeout this tick
   }
-#else
-  if (0 != (sources & (1 << 11))) {
-    memory_write_barrier(); // About to write to device_pages.QA7
-    device_pages.QA7.Local_timer_write_flags = (1 << 31);
-    ms_ticks ++;
-    gate_function( 0, 0 ); // Special case for interrupt handler thread
-asm( "svc 0" );
-    // QA7 is shared between cores, does that mean only one core will receive this interrupt?
-    // FIXME
-  }
-#endif
 
   for (int i = 0; sources != 0 && i < 12; i++) {
     if (0 != ((1 << i) & sources)) {
@@ -375,25 +359,26 @@ NUMBER MapValue__DRIVER_SYSTEM__physical_address_of( MapValue o, NUMBER va )
   return NUMBER_from_integer_register( unknown_call( DRIVER_SYSTEM_physical_address_of ) ); // FIXME
 }
 
-void MapValue__SYSTEM__register_service( MapValue o, NUMBER name_crc, SERVICE service )
+void MapValue__SYSTEM__register_service( MapValue o, NUMBER name_crc, NUMBER service, NUMBER type_crc )
 {
   o = o;
   struct service *s = &services[free_service++]; // FIXME limit! LOCK!!!
-  s->name = name_crc.r;
+  s->name_crc = name_crc;
+  s->type_crc = type_crc;
   s->service = service;
 }
 
-SERVICE MapValue__SYSTEM__get_service( MapValue o, NUMBER name_crc )
+NUMBER MapValue__SYSTEM__get_service( MapValue o, NUMBER name_crc, NUMBER type_crc, NUMBER timeout )
 {
   o = o;
   struct service *s = services;
   while (s < &services[free_service]) {
-    if (s->name == name_crc.r) {
-      return SERVICE_duplicate_to_return( s->service );
+    if (s->name_crc.r == name_crc.r && (type_crc.r == 0 || type_crc.r == s->type_crc.r)) {
+      return NUMBER_from_integer_register( duplicate_to_return( s->service.r ) );
     }
     s++;
   }
-  return SERVICE_from_integer_register( 0 );
+  return NUMBER_from_integer_register( 0 );
 }
 
 PHYSICAL_MEMORY_BLOCK MapValue__SYSTEM__allocate_memory( MapValue o, NUMBER size )
@@ -446,173 +431,6 @@ void MapValue__DRIVER_SYSTEM__remove_interrupt_handler( MapValue o, INTERRUPT_HA
   board_remove_interrupt_handler( handler, interrupt.r );
 }
 
-#if 0
-uint64_t map_service_c_code( uint64_t o, uint32_t call, uint64_t p1, uint64_t p2, uint64_t p3 )
-{
-  MapValue mv = { .r = o };
-
-  switch (call) {
-  case DRIVER_SYSTEM_get_device_page:
-    {
-      ContiguousMemoryBlock cmb = { .start_page = p1 >> 12,
-                                    .page_count = 1,
-                                    .memory_type = Device_nGnRnE };
-      return object_to_return( (void*) System_Service_PhysicalMemoryBlock, cmb.r );
-    }
-    break;
-  case DRIVER_SYSTEM_get_physical_memory_block:
-    {
-      ContiguousMemoryBlock cmb = { .start_page = p1 >> 12,
-                                    .page_count = p2 >> 12,
-                                    .memory_type = Fully_Cacheable };
-      return object_to_return( (void*) System_Service_PhysicalMemoryBlock, cmb.r );
-    }
-    break;
-  case DRIVER_SYSTEM_map_at:
-    {
-      claim_lock( &vmb_lock );
-            // FIXME Expand number of blocks
-            // FIXME Allow for addresses not in order
-            // FIXME Invalid parameters
-      ContiguousMemoryBlock cmb;
-      cmb.r = make_special_request( Isambard_System_Service_ReadInterface, p1 );
-
-      make_special_request( Isambard_System_Service_ReadHeap, mv.heap_offset_lsr4 << 4, mv.number_of_vmbs * sizeof( VirtualMemoryBlock ), vmbs );
-
-      for (int i = 0; i < mv.number_of_vmbs; i++) {
-        if (vmbs[i].page_count == 0) {
-          vmbs[i].start_page = p2 >> 12;
-          vmbs[i].page_count = cmb.page_count;
-          vmbs[i].read_only = 0;
-          vmbs[i].executable = 0;
-          vmbs[i].memory_block = p1;
-          vmbs[i+1].r = 0;
-          break;
-        }
-      }
-
-      make_special_request( Isambard_System_Service_WriteHeap, mv.heap_offset_lsr4 << 4, mv.number_of_vmbs * sizeof( VirtualMemoryBlock ), vmbs );
-      release_lock( &vmb_lock );
-      return 0;
-    }
-  case DRIVER_SYSTEM_create_thread:
-    {
-      return make_special_request( Isambard_System_Service_Create_Thread, p1, p2, p3 );
-    }
-    break;
-  case DRIVER_SYSTEM_physical_address_of:
-    // This function is implemented at el1;
-    break;
-  case DRIVER_SYSTEM_register_service:
-    {
-      struct service *s = &services[free_service++]; // FIXME limit!
-      s->provider = p2;
-      s->name = p1;
-      return 0;
-    }
-    break;
-  case DRIVER_SYSTEM_get_service:
-    {
-      struct service *s = services;
-      while (s < &services[free_service]) {
-        if (s->name == p1) {
-          return duplicate_to_return( s->provider );
-        }
-      }
-      return 0;
-    }
-  case DRIVER_SYSTEM_get_core_interrupts_count:
-    {
-      return this_core.interrupts_count;
-    }
-    break;
-  case DRIVER_SYSTEM_get_ms_timer_ticks:
-    {
-      return ms_ticks;
-    }
-    break;
-  case DRIVER_SYSTEM_get_core_timer_value:
-    {
-      return core_timer_value();
-    }
-    break;
-  case DRIVER_SYSTEM_register_interrupt_handler:
-    {
-      board_register_interrupt_handler( p1, p2 );
-      return 0;
-    }
-    break;
-  case DRIVER_SYSTEM_remove_interrupt_handler:
-    {
-      board_remove_interrupt_handler( p1, p2 );
-      return 0;
-    }
-    break;
-  }
-  for (;;) { asm volatile ( "svc 1\n\tbrk 2" ); }
-}
-#endif
-
-#if 0
-typedef MapExportValue DS;
-
-ISAMBARD_DRIVER_SYSTEM__SERVER( DS );
-
-static PHYSICAL_MEMORY_BLOCK DS__DRIVER_SYSTEM__get_device_page( DS o, NUMBER physical_address )
-{
-  ContiguousMemoryBlock cmb = { .start_page = physical_address >> 12,
-                                .page_count = 1,
-                                .memory_type = Device_nGnRnE,
-                                .is_contiguous_memory_block = 0 };
-  return object_to_return( (void*) System_Service_PhysicalMemoryBlock, cmb.raw );
-}
-
-static PHYSICAL_MEMORY_BLOCK DS__DRIVER_SYSTEM__get_physical_memory_block( DS o, NUMBER start, NUMBER size )
-{
-}
-
-static void DS__DRIVER_SYSTEM__map_at( DS o, PHYSICAL_MEMORY_BLOCK block, NUMBER start )
-{
-}
-
-static NUMBER DS__DRIVER_SYSTEM__create_thread( DS o, NUMBER code, NUMBER stack_top )
-{
-}
-
-static NUMBER DS__DRIVER_SYSTEM__physical_address_of( DS o, NUMBER va )
-{
-}
-
-static void DS__DRIVER_SYSTEM__register_service( DS o, NUMBER name_crc, NUMBER provider )
-{
-}
-
-static SERVICE DS__DRIVER_SYSTEM__get_service( DS o, NUMBER name_crc )
-{
-}
-
-static NUMBER DS__DRIVER_SYSTEM__get_core_interrupts_count( DS o )
-{
-}
-
-static NUMBER DS__DRIVER_SYSTEM__get_ms_timer_ticks( DS o )
-{
-}
-
-static NUMBER DS__DRIVER_SYSTEM__get_core_timer_value( DS o )
-{
-}
-
-static void DS__DRIVER_SYSTEM__register_interrupt_handler( DS o, INTERRUPT_HANDLER handler, NUMBER interrupt )
-{
-}
-
-static void DS__DRIVER_SYSTEM__remove_interrupt_handler( DS o, INTERRUPT_HANDLER handler, NUMBER interrupt )
-{
-}
-
-#endif
-
 extern void subsequent_core_system_thread();
 
 void __attribute__(( noreturn )) interrupt_handler_thread()
@@ -652,8 +470,7 @@ static void start_ms_timer()
   device_pages.QA7.Core_IRQ_Source[2] = 0x00d; // (1 << 8);
   device_pages.QA7.Core_IRQ_Source[3] = 0x00d; // (1 << 8);
 
-  device_pages.QA7.Core_timers_Interrupt_control[this_core.number] = 1; // nCNTPSIRQ IRQ enable
-  device_pages.QA7.Core_timers_Interrupt_control[this_core.number] = 15; // All timers IRQ enable FIXME
+  device_pages.QA7.Core_timers_Interrupt_control[this_core.number] = 2; // The interrupt that's triggered by the generic ARM timer
 
   // Establish 1ms timer, using generic timer (implemented in QEMU, unlike the above)
   uint64_t now;

@@ -365,20 +365,17 @@ static struct fb_service_object_container __attribute__(( aligned(16) )) fb_serv
 ISAMBARD_INTERFACE( FRAME_BUFFER )
 
 #include "interfaces/provider/FRAME_BUFFER.h"
-#include "interfaces/provider/SERVICE.h"
 
 typedef union { integer_register r; fb_service_object *p; } FB;
 
 ISAMBARD_FRAME_BUFFER__SERVER( FB )
-ISAMBARD_SERVICE__SERVER( FB )
-ISAMBARD_PROVIDER( FB, AS_FRAME_BUFFER( FB ) ; AS_SERVICE( FB ) )
+ISAMBARD_PROVIDER( FB, AS_FRAME_BUFFER( FB ) )
 ISAMBARD_PROVIDER_UNLOCKED_PER_OBJECT_STACK( FB )
 
 void expose_frame_buffer()
 {
   FB fb = { .p = &fb_service_singleton.object };
-  SERVICE obj = FB_SERVICE_to_pass_to( system.r, fb );
-  register_service( "Frame Buffer", obj );
+  FB_FRAME_BUFFER_register_service( "Frame Buffer", fb );
 }
 
 PHYSICAL_MEMORY_BLOCK FB__FRAME_BUFFER__get_frame_buffer( FB o )

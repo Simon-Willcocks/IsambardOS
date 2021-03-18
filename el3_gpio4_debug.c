@@ -139,7 +139,26 @@ void blink_number( uint32_t base, uint32_t number )
 #define AARCH64_VECTOR_TABLE_SPX_FIQ_CODE BSOD( __COUNTER__ )
 #define AARCH64_VECTOR_TABLE_SPX_SERROR_CODE BSOD( __COUNTER__ )
 // Where an SMC comes to: But, it looks like I get to VBAR_EL3_SPX_SYNC, somehow...
-#define AARCH64_VECTOR_TABLE_LOWER_AARCH64_SYNC_CODE asm( "0: mov x0, #0x3f200000\n\tmov x1, #0\n\tbl led_blink\n\tmov x0, #0x3f200000\n\tmov x1, #18\n\tbl led_blink\n\tmov x0, #0x3f200000\n\tmrs x1, esr_el3\n\tand x1, x1, #0xffff\n\tbl led_blink\n\tb 0b" );
+//#define AARCH64_VECTOR_TABLE_LOWER_AARCH64_SYNC_CODE asm( "0: mov x0, #0x3f200000\n\tmov x1, #0\n\tbl led_blink\n\tmov x0, #0x3f200000\n\tmov x1, #18\n\tbl led_blink\n\tmov x0, #0x3f200000\n\tmrs x1, esr_el3\n\tand x1, x1, #0xffff\n\tbl led_blink\n\tb 0b" );
+
+uint64_t __attribute__(( aligned( 16 ) )) smc_stack[64];
+void showme()
+{
+  uint64_t pc;
+  asm ( "mrs %[pc], ELR_EL1" : [pc] "=r" (pc) );
+  for (;;)
+  blink_number( 0x3f200000, pc );
+  
+  uint32_t volatile *base = (uint32_t*) 0xe450;
+  while (base[5] == (2 << 20)) {
+    
+  }
+  uint32_t volatile *p = (uint32_t*) (uint64_t) base[5];
+  for (int i = 0; i < 10000; i++) p[i] = 0xffffffff;
+  for (;;) {}
+}
+
+#define AARCH64_VECTOR_TABLE_LOWER_AARCH64_SYNC_CODE asm( "adr x16, smc_stack+64*8\n\tmov sp, x16\n\tbl showme" );
 
 #define AARCH64_VECTOR_TABLE_LOWER_AARCH64_IRQ_CODE BSOD( __COUNTER__ )
 #define AARCH64_VECTOR_TABLE_LOWER_AARCH64_FIQ_CODE BSOD( __COUNTER__ )
