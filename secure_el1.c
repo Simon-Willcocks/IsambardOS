@@ -351,6 +351,11 @@ static Interface *obtain_interface()
 
 void initialise_new_thread( thread_context *thread )
 {
+  for (int i = 0; i < 31; i++) {
+    thread->regs[i] = i * 0x0100000000000000ull;
+    thread->regs[i] |= (0xfffffff & (uint64_t) thread);
+  }
+
   // No longer free, must always be in a linked list
   thread->next = thread;
   thread->prev = thread;
@@ -360,6 +365,7 @@ void initialise_new_thread( thread_context *thread )
   thread->gate = 0;
   thread->fp = 0;
   thread->regs[18] = thread_code( thread );
+
   // No particularly good reason for a downward growing stack...
   thread->stack_pointer = thread->stack + numberof( thread->stack ) - 1;
   thread->stack_limit = thread->stack;
@@ -1189,6 +1195,14 @@ static inline thread_switch SEL1_LOWER_AARCH64_SYNC_CODE_may_change_map( Core *c
       break;
     case 0b100010:
       {
+asm ( "mov x20, %[r]" : : [r] "r" (thread->regs[0]) );
+asm ( "mov x21, %[r]" : : [r] "r" (thread->regs[1]) );
+asm ( "mov x22, %[r]" : : [r] "r" (thread->regs[2]) );
+asm ( "mov x23, %[r]" : : [r] "r" (thread->regs[3]) );
+asm ( "mov x24, %[r]" : : [r] "r" (thread->regs[4]) );
+asm ( "mov x25, %[r]" : : [r] "r" (thread->regs[5]) );
+asm ( "mov x26, %[r]" : : [r] "r" (thread->regs[30]) );
+asm ( "mov x27, %[r]" : : [r] "r" (thread->regs[31]) );
         BSOD( __COUNTER__ ); // Misaligned PC
       }
       break;

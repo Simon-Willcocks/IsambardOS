@@ -465,7 +465,7 @@ void show_page_thread()
 
   wake_thread( initialisation_thread );
 
-  if (tnd.r == 0) { return; }
+  if (tnd.r == 0) { for (;;) {}; return; }
 
   TRIVIAL_NUMERIC_DISPLAY__set_page_to_show( tnd, test_memory, NUMBER_from_pointer( mapped_memory ) );
   for (;;) {

@@ -141,21 +141,268 @@ void blink_number( uint32_t base, uint32_t number )
 // Where an SMC comes to: But, it looks like I get to VBAR_EL3_SPX_SYNC, somehow...
 //#define AARCH64_VECTOR_TABLE_LOWER_AARCH64_SYNC_CODE asm( "0: mov x0, #0x3f200000\n\tmov x1, #0\n\tbl led_blink\n\tmov x0, #0x3f200000\n\tmov x1, #18\n\tbl led_blink\n\tmov x0, #0x3f200000\n\tmrs x1, esr_el3\n\tand x1, x1, #0xffff\n\tbl led_blink\n\tb 0b" );
 
+
+static uint32_t *const mapped_address = (void*) 0x0e400000;
+static const uint32_t width = 1920;
+static const uint32_t height = 1080;
+static const uint32_t vwidth = 1920;
+static const uint32_t vheight = 1080;
+
+enum fb_colours {
+  Black   = 0xff000000,
+  Grey    = 0xff888888,
+  Blue    = 0xff0000ff,
+  Green   = 0xff00ff00,
+  Red     = 0xffff0000,
+  Yellow  = 0xffffff00,
+  Magenta = 0xffff00ff,
+  White   = 0xffffffff };
+
+static const unsigned char bitmaps[16][8] = {
+  {
+  0b00111100,
+  0b01100110,
+  0b01100110,
+  0b01100110,
+  0b01100110,
+  0b01100110,
+  0b00111100,
+  0b00000000
+  },{
+  0b00011100,
+  0b00111100,
+  0b00001100,
+  0b00001100,
+  0b00001100,
+  0b00001100,
+  0b00011110,
+  0b00000000
+  },{
+  0b00111100,
+  0b01100110,
+  0b00001100,
+  0b00011000,
+  0b00110000,
+  0b01111110,
+  0b01111110,
+  0b00000000
+  },{
+  0b00111100,
+  0b01100110,
+  0b00000110,
+  0b00011110,
+  0b00000110,
+  0b01100110,
+  0b00111100,
+  0b00000000
+  },{
+  0b00011000,
+  0b00110000,
+  0b01100000,
+  0b01101100,
+  0b01111110,
+  0b00001100,
+  0b00001100,
+  0b00000000
+  },{
+  0b01111110,
+  0b01100000,
+  0b01100000,
+  0b01111100,
+  0b00000110,
+  0b01100110,
+  0b00111100,
+  0b00000000
+  },{
+  0b00111100,
+  0b01100110,
+  0b01100000,
+  0b01111100,
+  0b01100110,
+  0b01100110,
+  0b00111100,
+  0b00000000
+  },{
+  0b01111110,
+  0b00000110,
+  0b00001100,
+  0b00011000,
+  0b00110000,
+  0b01100000,
+  0b01100000,
+  0b00000000
+  },{
+  0b00111100,
+  0b01100110,
+  0b01100110,
+  0b00111100,
+  0b01100110,
+  0b01100110,
+  0b00111100,
+  0b00000000
+  },{
+  0b00111100,
+  0b01100110,
+  0b01100110,
+  0b00111110,
+  0b00000110,
+  0b01100110,
+  0b00111000,
+  0b00000000
+  },{
+  0b00111100,
+  0b01100110,
+  0b01100110,
+  0b01100110,
+  0b01111110,
+  0b01100110,
+  0b01100110,
+  0b00000000
+  },{
+  0b01111000,
+  0b01100110,
+  0b01100110,
+  0b01111100,
+  0b01100110,
+  0b01100110,
+  0b01111000,
+  0b00000000
+  },{
+  0b00111100,
+  0b01100110,
+  0b01100000,
+  0b01100000,
+  0b01100000,
+  0b01100110,
+  0b00111100,
+  0b00000000
+  },{
+  0b01111000,
+  0b01101100,
+  0b01100110,
+  0b01100110,
+  0b01100110,
+  0b01101100,
+  0b01111000,
+  0b00000000
+  },{
+  0b01111110,
+  0b01100000,
+  0b01100000,
+  0b01111000,
+  0b01100000,
+  0b01100000,
+  0b01111110,
+  0b00000000
+  },{
+  0b01111110,
+  0b01100000,
+  0b01100000,
+  0b01111000,
+  0b01100000,
+  0b01100000,
+  0b01100000,
+  0b00000000
+  }
+};
+
+static inline void set_pixel( uint32_t x, uint32_t y, uint32_t colour )
+{
+  mapped_address[x + y * vwidth] = colour;
+}
+
+static inline void show_nibble( uint32_t x, uint32_t y, uint32_t nibble, uint32_t colour )
+{
+  uint32_t dx = 0;
+  uint32_t dy = 0;
+
+  for (dy = 0; dy < 8; dy++) {
+    for (dx = 0; dx < 8; dx++) {
+      if (0 != (bitmaps[nibble][dy] & (0x80 >> dx)))
+        set_pixel( x+dx, y+dy, colour );
+      else
+        set_pixel( x+dx, y+dy, Black );
+    }
+  }
+}
+
+// static void show_word( int x, int y, uint32_t number, uint32_t colour )
+void show_word( int x, int y, uint32_t number, uint32_t colour )
+{
+  for (int shift = 28; shift >= 0; shift -= 4) {
+    show_nibble( x, y, (number >> shift) & 0xf, colour );
+    x += 8;
+  }
+}
+
+static void show_qword( int x, int y, uint64_t number, uint32_t colour )
+{
+  show_word( x, y, (uint32_t) (number >> 32), colour );
+  show_word( x+66, y, (uint32_t) (number & 0xffffffff), colour );
+}
+
+/*
+static void show_pointer( int x, int y, void *ptr, uint32_t colour )
+{
+  show_qword( x, y, ((char*)ptr - (char*)0), colour );
+}
+*/
+
+static void show_page( uint32_t *number )
+{
+  // 4 * 16 * 16 * 4 = 4096 bytes
+  for (int y = 0; y < 4*16; y++) {
+    show_word( 0, y * 8 + 64, ((char *)(&number[y*16]) - (char *)0), White );
+    for (int x = 0; x < 16; x++) {
+      uint32_t colour = White;
+      if (0 == (y & 7) || 0 == (x & 7)) colour = Green;
+      show_word( x * 68 + 72, y * 8 + 64, number[x + y * 16], colour );
+    }
+  }
+}
+
 uint64_t __attribute__(( aligned( 16 ) )) smc_stack[64];
 void showme()
 {
+  uint32_t *p = (void*) 0x0e400000; // Quick and dirty
   uint64_t pc;
-  asm ( "mrs %[pc], ELR_EL1" : [pc] "=r" (pc) );
+#define SHOW( r, x, y ) { uint32_t pc; asm ( "mrs %[pc], "#r : [pc] "=r" (pc) ); show_word( x, y, pc, Yellow ); }
+#define SHOWL( r, x, y ) { uint64_t pc; asm ( "mrs %[pc], "#r : [pc] "=r" (pc) ); show_qword( x, y, pc, Yellow ); }
+  SHOWL( ELR_EL1, 100, 10 );
+  SHOWL( FAR_EL1, 300, 10 );
+  SHOW( ESR_EL1, 500, 10 );
+  SHOWL( TTBR0_EL1, 600, 10 );
+
+  SHOW( ELR_EL3, 100, 20 );
+  SHOW( FAR_EL3, 200, 20 );
+  SHOW( ESR_EL3, 300, 20 );
+
+#define SHOW_REG( n ) asm ( "mov %[pc], x"#n : [pc] "=r" (pc) ); show_qword( 1600, n * 10, pc, White );
+  SHOW_REG( 18 );
+  SHOW_REG( 19 );
+  SHOW_REG( 20 );
+  SHOW_REG( 21 );
+  SHOW_REG( 22 );
+  SHOW_REG( 23 );
+  SHOW_REG( 24 );
+  SHOW_REG( 25 );
+  SHOW_REG( 26 );
+  SHOW_REG( 27 );
+  SHOW_REG( 28 );
+  SHOW_REG( 29 );
+  SHOW_REG( 30 );
+
+  uint64_t *page = (void*) 0x8000;
+  // page = page[511] & ~0xfff;
+  show_page( (void*) page );
+  for (uint64_t i = 0; i < LED_BLINK_TIME * 400; i++) { asm volatile ( "" ); }
+
   for (;;)
-  blink_number( 0x3f200000, pc );
-  
-  uint32_t volatile *base = (uint32_t*) 0xe450;
-  while (base[5] == (2 << 20)) {
-    
-  }
-  uint32_t volatile *p = (uint32_t*) (uint64_t) base[5];
-  for (int i = 0; i < 10000; i++) p[i] = 0xffffffff;
-  for (;;) {}
+    for (int i = 0; i < 0x30000; i+= 0x1000)
+    {
+      show_page( (void*) i );
+      for (uint64_t i = 0; i < LED_BLINK_TIME * 10; i++) { asm volatile ( "" ); }
+    }
 }
 
 #define AARCH64_VECTOR_TABLE_LOWER_AARCH64_SYNC_CODE asm( "adr x16, smc_stack+64*8\n\tmov sp, x16\n\tbl showme" );
