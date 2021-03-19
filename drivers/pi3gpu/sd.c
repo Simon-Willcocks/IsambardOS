@@ -451,7 +451,7 @@ PHYSICAL_MEMORY_BLOCK test_memory;
 uint32_t *mapped_memory = (void*) (0x10000);
 
 TRIVIAL_NUMERIC_DISPLAY tnd = {};
-uint32_t initialisation_thread = 0;
+uint32_t initialisation_thread = -1;
 
 void show_page_thread()
 {
@@ -461,11 +461,9 @@ void show_page_thread()
   mapped_memory[0] = 0;
   mapped_memory[1] = 0;
 
-  tnd = TRIVIAL_NUMERIC_DISPLAY__get_service( "Trivial Numeric Display", 20 );
+  tnd = TRIVIAL_NUMERIC_DISPLAY__get_service( "Trivial Numeric Display", -1 );
 
   wake_thread( initialisation_thread );
-
-  if (tnd.r == 0) { for (;;) {}; return; }
 
   TRIVIAL_NUMERIC_DISPLAY__set_page_to_show( tnd, test_memory, NUMBER_from_pointer( mapped_memory ) );
   for (;;) {
@@ -497,7 +495,7 @@ void expose_emmc()
   start_show_page_thread();
 
   wait_until_woken(); // While debugging, this means that the frame buffer had been initialised, so we're the only driver using the mailbox
-return;
+
   debug_progress = 1;
 
   EMMC emmc = { .p = &emmc_service_singleton.object };

@@ -91,8 +91,8 @@ static inline thread_switch handle_svc_gate( Core *core, thread_context *thread 
 
     thread_context *release_thread = thread_from_code( thread->regs[0] );
 
-    if (thread->current_map == release_thread->current_map) { // More checks?
-      if (release_thread->gate == (int32_t) thread->regs[0]) {
+    if (release_thread->gate == (int32_t) thread->regs[0]) {
+      if (thread->current_map == release_thread->current_map) { // More checks?
         // Indicates the thread is blocked 
         insert_new_thread_after_old( release_thread, thread );
         release_thread->gate = 0;
@@ -108,12 +108,13 @@ static inline thread_switch handle_svc_gate( Core *core, thread_context *thread 
         }
       }
       else {
-        release_thread->gate++;
+        invalidate_all_caches();
+	// This could, possibly, be legal. Probably not useful.
+        BSOD( __COUNTER__ ); // Threads not blocked in same map
       }
     }
     else {
-      invalidate_all_caches();
-      BSOD( __COUNTER__ ); // Threads not blocked in same map
+      release_thread->gate++;
     }
   }
   else {

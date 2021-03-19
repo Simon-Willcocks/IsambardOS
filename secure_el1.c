@@ -1202,7 +1202,6 @@ asm ( "mov x23, %[r]" : : [r] "r" (thread->regs[3]) );
 asm ( "mov x24, %[r]" : : [r] "r" (thread->regs[4]) );
 asm ( "mov x25, %[r]" : : [r] "r" (thread->regs[5]) );
 asm ( "mov x26, %[r]" : : [r] "r" (thread->regs[30]) );
-asm ( "mov x27, %[r]" : : [r] "r" (thread->regs[31]) );
         BSOD( __COUNTER__ ); // Misaligned PC
       }
       break;

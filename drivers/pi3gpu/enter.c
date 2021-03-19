@@ -99,7 +99,7 @@ void entry()
 
   expose_gpu_mailbox();
 
-  GPU_MAILBOX factory = GPU_MAILBOX__get_service( "Pi GPU Mailboxes", -1ull );
+  GPU_MAILBOX factory = GPU_MAILBOX__get_service( "Pi GPU Mailboxes", -1 );
   channel8 = GPU_MAILBOX__claim_channel( factory, NUMBER_from_integer_register( 8 ) );
 
   memory_write_barrier(); // About to write to devices.timer
@@ -107,7 +107,7 @@ void entry()
   devices.timer.control |= 0x2a2; // Interrupts enabled, but see bit 0 of Enable_Basic_IRQs
 
   memory_write_barrier(); // About to write to devices.interrupts
-  devices.interrupts.Enable_Basic_IRQs = 1; // Enable "ARM Timer" IRQ
+  // devices.interrupts.Enable_Basic_IRQs = 1; // Enable "ARM Timer" IRQ
   devices.interrupts.Enable_Basic_IRQs = 2; // Enable "ARM Mailbox" IRQ
 
   expose_frame_buffer();

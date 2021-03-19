@@ -278,14 +278,15 @@ void export_client_code()
     crc = crc32( "__", 2, crc );
 
     if (0 != strcmp( interface_name, "SYSTEM" )) {
-            // FIXME Implement timeouts in system driver, but release the thread's resources while waiting...
-      printf( "static inline %s %s__get_service( const char *name, integer_register timeout )\n", interface_name, interface_name );
+            // FIXME Implement timeouts in system driver, but release the thread's resources in the map while waiting...
+      printf( "static inline %s %s__get_service( const char *name, long timeout )\n", interface_name, interface_name );
       printf( "{\n" );
       printf( "  NUMBER result = {};\n" );
       printf( "  do {\n" );
       printf( "    result = SYSTEM__get_service( system, name_code( name ), NUMBER_from_integer_register( 0x%08x ), NUMBER_from_integer_register( 0 ) );\n", crc );
-      printf( "    if (result.r == 0 && --timeout > 0) sleep_ms( 1 );\n" );
-      printf( "  } while (timeout > 0 && result.r == 0);\n" );
+      printf( "    if (timeout > 0) { timeout--; }\n" );
+      printf( "    if (result.r == 0 && timeout != 0) { sleep_ms( 1 ); }\n" );
+      printf( "  } while (timeout != 0 && result.r == 0);\n" );
       printf( "  return %s_from_integer_register( result.r );\n", interface_name );
       printf( "}\n" );
     }

@@ -292,7 +292,7 @@ void TND__TRIVIAL_NUMERIC_DISPLAY__show_page( TND o )
 
 void entry()
 {
-  FRAME_BUFFER fb = FRAME_BUFFER__get_service( "Frame Buffer", 0 );
+  FRAME_BUFFER fb = FRAME_BUFFER__get_service( "Frame Buffer", -1 );
 
   PHYSICAL_MEMORY_BLOCK screen_page = FRAME_BUFFER__get_frame_buffer( fb );
   DRIVER_SYSTEM__map_at( driver_system(), screen_page, NUMBER_from_integer_register( mapped_address ) );

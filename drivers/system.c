@@ -250,7 +250,12 @@ interrupts_handled[0]+= 0x100000;
   memory_read_barrier(); // Completed our reads of device_pages.QA7
 
   if (0 != (sources & 2)) { // Timer interrupt
+#ifdef QEMU
+    asm ( "mrs %[d], CNTPCT_EL0" : [d] "=r" (this_core.last_cval) );
+    this_core.last_cval += 40 * ticks_per_millisecond;
+#else
     this_core.last_cval += ticks_per_millisecond;
+#endif
     asm ( "msr CNTP_CVAL_EL0, %[d]" : : [d] "r" (this_core.last_cval) );
     ms_ticks ++;
     gate_function( 0, 0 ); // Special case for interrupt handler thread, releases all threads that timeout this tick

@@ -54,10 +54,11 @@ extern void __attribute__(( noreturn )) enter_secure_el1( Core *phys_core, int n
 void __attribute__(( noreturn, noinline )) c_el3_nommu( Core *core, int number )
 {
   // Running at EL3, without memory management, which means load/store exclusive is inactive
-
-  // asm volatile ( "msr cntfrq_el0, %[bits]\n" : : [bits] "r" (0x0124f800) ); // Frequency 19.2 MHz
-  asm volatile ( "msr cntfrq_el0, %[bits]\n" : : [bits] "r" (38400000) );
-  // asm volatile ( "msr cntfrq_el0, %[bits]\n" : : [bits] "r" (1000000) ); // Frequency 1 MHz
+#ifdef QEMU
+  asm volatile ( "msr cntfrq_el0, %[bits]\n" : : [bits] "r" (625000000) ); // Frequency for qemu
+#else
+  asm volatile ( "msr cntfrq_el0, %[bits]\n" : : [bits] "r" (38400000) ); // Frequency of clock (pi3)
+#endif
 
   if (sizeof( uint32_t ) != 4 || sizeof( uint64_t ) != 8) {
     asm volatile ( "wfi" );
