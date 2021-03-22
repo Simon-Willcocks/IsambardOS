@@ -46,6 +46,7 @@ static void setbit( uint64_t volatile *var, int bit )
   };
 }
 
+#ifdef ISAMBARD_LOCK_WAIT
 static void claim_lock( uint64_t volatile *var )
 {
 	// FIXME: will try to block even if it's the owner of the lock
@@ -53,7 +54,7 @@ static void claim_lock( uint64_t volatile *var )
         "\n\t2:"
         "\n\tldxr x16, [x17]"
         "\n\tcbz x16, 0f"
-        "\n\tsvc 0xfffa"
+        "\n\tsvc #"ENSTRING( ISAMBARD_LOCK_WAIT )
         "\n\tb 1f"
         "\n0:"
         "\n\tstxr w16, x18, [x17]"
@@ -69,11 +70,11 @@ static void release_lock( uint64_t volatile *var )
         "\n\tldxr x16, [x17]"
         "\n\tcmp x16, x18"
         "\n\tbeq 0f"
-        "\n\tsvc 0xfffb"
+        "\n\tsvc #"ENSTRING( ISAMBARD_LOCK_RELEASE )
         "\n\tb 1f"
         "\n0:"
         "\n\tstxr w16, xzr, [x17]"
         "\n\tcbnz x16, 2b"
         "\n1:" : : [lock] "r" (var) );
 }
-
+#endif

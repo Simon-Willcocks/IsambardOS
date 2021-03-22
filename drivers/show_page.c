@@ -245,12 +245,13 @@ ISAMBARD_INTERFACE( TRIVIAL_NUMERIC_DISPLAY )
 
 ISAMBARD_TRIVIAL_NUMERIC_DISPLAY__SERVER( TND )
 ISAMBARD_PROVIDER( TND, AS_TRIVIAL_NUMERIC_DISPLAY( TND ) )
-ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( TND, tnd_stack_lock, tnd_stack, 64 * 8 )
+ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( TND, RETURN_FUNCTIONS_TRIVIAL_NUMERIC_DISPLAY( TND ), tnd_stack_lock, tnd_stack, 64 * 8 )
 
 void TND__TRIVIAL_NUMERIC_DISPLAY__show_4bits( TND o, NUMBER x, NUMBER y, NUMBER value, NUMBER colour )
 {
   o = o;
   show_nibble( x.r, y.r, value.r & 0xf, colour.r );
+  TND__TRIVIAL_NUMERIC_DISPLAY__show_4bits__return();
 }
 
 void TND__TRIVIAL_NUMERIC_DISPLAY__show_8bits( TND o, NUMBER x, NUMBER y, NUMBER value, NUMBER colour )
@@ -258,18 +259,21 @@ void TND__TRIVIAL_NUMERIC_DISPLAY__show_8bits( TND o, NUMBER x, NUMBER y, NUMBER
   o = o;
   show_nibble( x.r+8, y.r, value.r & 0xf, colour.r );
   show_nibble( x.r, y.r, (value.r >> 4) & 0xf, colour.r );
+  TND__TRIVIAL_NUMERIC_DISPLAY__show_8bits__return();
 }
 
 void TND__TRIVIAL_NUMERIC_DISPLAY__show_32bits( TND o, NUMBER x, NUMBER y, NUMBER value, NUMBER colour )
 {
   o = o;
   show_word( x.r, y.r, value.r, colour.r );
+  TND__TRIVIAL_NUMERIC_DISPLAY__show_32bits__return();
 }
 
 void TND__TRIVIAL_NUMERIC_DISPLAY__show_64bits( TND o, NUMBER x, NUMBER y, NUMBER value, NUMBER colour )
 {
   o = o;
   show_qword( x.r, y.r, value.r, colour.r );
+  TND__TRIVIAL_NUMERIC_DISPLAY__show_64bits__return();
 }
 
 extern uint32_t devices;
@@ -281,6 +285,7 @@ void TND__TRIVIAL_NUMERIC_DISPLAY__set_page_to_show( TND o, PHYSICAL_MEMORY_BLOC
   DRIVER_SYSTEM__map_at( driver_system(), page, NUMBER_from_integer_register( (uint64_t) &devices ) );
   page_to_display = page;
   page_start = start.r;
+  TND__TRIVIAL_NUMERIC_DISPLAY__set_page_to_show__return();
 }
 
 void TND__TRIVIAL_NUMERIC_DISPLAY__show_page( TND o )
@@ -288,6 +293,7 @@ void TND__TRIVIAL_NUMERIC_DISPLAY__show_page( TND o )
   o = o;
 
   show_page( &devices, page_start );
+  TND__TRIVIAL_NUMERIC_DISPLAY__show_page__return();
 }
 
 void entry()
@@ -297,7 +303,6 @@ void entry()
   PHYSICAL_MEMORY_BLOCK screen_page = FRAME_BUFFER__get_frame_buffer( fb );
   DRIVER_SYSTEM__map_at( driver_system(), screen_page, NUMBER_from_integer_register( mapped_address ) );
 
-  TND tnd = {};
-  TND_TRIVIAL_NUMERIC_DISPLAY_register_service( "Trivial Numeric Display", tnd );
+  TND_TRIVIAL_NUMERIC_DISPLAY_register_service( "Trivial Numeric Display", 0 );
 }
 

@@ -9,8 +9,7 @@
 
 #include "devices.h"
 
-unsigned long long stack_lock = 0;
-unsigned long long __attribute__(( aligned( 16 ) )) stack[STACK_SIZE] = { 0x33333333 }; // Just a marker
+unsigned long long __attribute__(( aligned( 16 ) )) interrupt_stack[64] = { 0x33333333 }; // Just a marker
 
 typedef struct {
   uint64_t lock;
@@ -20,18 +19,16 @@ typedef struct {
   uint32_t all_ints;
 } gpu_interrupt_object;
 
-STACK_PER_OBJECT( gpu_interrupt_object, 64 );
+static gpu_interrupt_object gpu_interrupt_handler_singleton __attribute__(( aligned(16) )) = { .count = 0, .diff = 0, .slowest_response = 0xffffffff };
 
 typedef union { integer_register r; gpu_interrupt_object *p; } GPU;
-
-static struct gpu_interrupt_object_container __attribute__(( aligned(16) )) gpu_interrupt_handler_singleton = { { 0 }, .object = { .lock = 0, .count = 0x33334444, .diff = 0, .slowest_response = 0xffffffff } };
 
 #include "interfaces/provider/INTERRUPT_HANDLER.h"
 
 ISAMBARD_INTERRUPT_HANDLER__SERVER( GPU )
 ISAMBARD_PROVIDER( GPU, AS_INTERRUPT_HANDLER( GPU ) )
 
-ISAMBARD_PROVIDER_UNLOCKED_PER_OBJECT_STACK( GPU )
+ISAMBARD_PROVIDER_NO_LOCK_AND_SINGLE_STACK( GPU, RETURN_FUNCTIONS_INTERRUPT_HANDLER( GPU ), interrupt_stack, 64*8 )
 
 void GPU__INTERRUPT_HANDLER__interrupt( GPU o )
 {
@@ -75,6 +72,8 @@ void GPU__INTERRUPT_HANDLER__interrupt( GPU o )
       }
     }
   }
+
+  GPU__INTERRUPT_HANDLER__interrupt__return();
 }
 
 void map_page( uint64_t physical, void *virtual )
@@ -92,8 +91,7 @@ void entry()
   map_page( 0x3f200000, (void*) &devices.gpio );
   map_page( 0x3f003000, (void*) &devices.system_timer );
 
-  GPU g = { .p = &gpu_interrupt_handler_singleton.object };
-  INTERRUPT_HANDLER obj = GPU_INTERRUPT_HANDLER_to_pass_to( system.r, g );
+  INTERRUPT_HANDLER obj = GPU_INTERRUPT_HANDLER_to_pass_to( system.r, &gpu_interrupt_handler_singleton );
 
   DRIVER_SYSTEM__register_interrupt_handler( driver_system(), obj, NUMBER_from_integer_register( 8 ) );
 
@@ -112,17 +110,5 @@ void entry()
 
   expose_frame_buffer();
   expose_emmc();
-  /*
-  for (;;) {
-    yield();
-    extern bool screen_mapped;
-    if (screen_mapped) {
-      extern void show_word( int x, int y, uint32_t number, uint32_t colour );
-      show_word( 800, 1000, gpu_interrupt_handler_singleton.object.all_ints, 0xffff00ff );
-      show_word( 1200, 1000, devices.interrupts.Enable_Basic_IRQs, 0xff00ffff );
-      memory_read_barrier(); // Completed our reads of devices.interrupts
-    }
-  }
-  */
 }
 

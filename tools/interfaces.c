@@ -299,18 +299,23 @@ void export_client_code()
 
 void export_interface_routine_server_code( const char *interface_name, const char *name, unsigned crc, char *in, char *out )
 {
+  char *p;
+
   int out_params = parameters_count( out );
 
-  switch (out_params) {
-  case 0: printf( "void" ); break;
-  case 1: print_parameter_type( out ); break;
-  default: printf( "TODO" );
+  printf( "extern void __attribute__(( noreturn )) c##__%s__%s__return( ", interface_name, name );
+  p = out;
+  for (int i = 0; i < out_params; i++) {
+    if (i != 0) printf( ", " );
+    print_parameter_decl( p );
+    p = strchr( p, ',' ) + 1;
   }
+  printf( " ); \\\n" );
 
-  printf( " c##__%s__%s( c o", interface_name, name );
+  printf( "void __attribute__(( noreturn )) c##__%s__%s( c o", interface_name, name );
 
   int in_params = parameters_count( in );
-  char *p = in;
+  p = in;
   for (int i = 0; i < in_params; i++) {
     printf( ", " );
     print_parameter_decl( p );
@@ -323,7 +328,6 @@ void export_interface_routine_server_code( const char *interface_name, const cha
 void export_interface_routine_case_code( const char *interface_name, const char *name, unsigned crc, char *in, char *out )
 {
   printf( "  case 0x%08x: ", crc );
-  if (out) printf( "return " );
   printf( "c##__%s__%s( o", interface_name, name );
 
   int in_params = parameters_count( in );
@@ -334,11 +338,13 @@ void export_interface_routine_case_code( const char *interface_name, const char 
     printf( "_from_integer_register( p%d )", i + 1 );
     p = strchr( p, ',' ) + 1;
   }
-  if (!out)
-    printf( " ); return 0;" );
-  else
-    printf( " ).r;" );
-  printf( " \\\n" );
+  printf( " ); \\\n" );
+}
+
+
+void export_interface_routine_return_functions( const char *interface_name, const char *name, unsigned crc, char *in, char *out )
+{
+  printf( "\"\\n\"#c\"__%s__%s__return:\"", interface_name, name );
 }
 
 void export_server_code()
@@ -351,18 +357,21 @@ void export_server_code()
     crc = crc32( "__", 2, crc );
 
     printf( "#define ISAMBARD_%s__SERVER( c ) \\\n", interface_name );
+    printf( "extern void __attribute__ ((noreturn)) c##__veneer(); \\\n" ); // Implementation provided by a macro from isambard_client.h
+    printf( "extern void __attribute__ ((noreturn)) c##__return(); \\\n" ); // Implementation provided by a macro from isambard_client.h
+    printf( "extern void __attribute__ ((noreturn)) c##__exception( integer_register code ); \\\n" ); // Implementation provided by a macro from isambard_client.h
+
     while (l < ends[i]) {
       split( interface_name, lines[l++], export_interface_routine_server_code, crc );
     }
 
-    // Only single return values supported.
-    printf( "integer_register c##_call_handler( c o, integer_register call, integer_register p1, integer_register p2, integer_register p3, integer_register p4 ); \\\n" );
-    printf( "extern void c##_veneer(); \\\n" ); // Implementation provided by a macro from isambard_client.h
+    // Return from the handler routines using the provided calls
+    printf( "void c##__call_handler( c o, integer_register call, integer_register p1, integer_register p2, integer_register p3, integer_register p4 ); \\\n" );
 
-    printf( "static inline void c##_%s_register_service( const char *name, c o ) { SYSTEM__register_service( system, name_code( name ), NUMBER_from_integer_register( object_to_pass_to( system.r, c##_veneer, o.r ) ), NUMBER_from_integer_register( 0x%08x ) ); } \\\n", interface_name, crc );
+    printf( "static inline void c##_%s_register_service( const char *name, void * v ) { SYSTEM__register_service( system, name_code( name ), NUMBER_from_integer_register( interface_to_pass_to( system.r, c##__veneer, v ) ), NUMBER_from_integer_register( 0x%08x ) ); } \\\n", interface_name, crc );
 
-    printf( "static inline %s c##_%s_to_return( c o ) { %s result; result.r = object_to_return( c##_veneer, o.r ); return result; } \\\n", interface_name, interface_name, interface_name );
-    printf( "static inline %s c##_%s_to_pass_to( integer_register target, c o ) { %s result; result.r = object_to_pass_to( target, c##_veneer, o.r ); return result; }\n\n", interface_name, interface_name, interface_name );
+    printf( "static inline %s c##_%s_to_return( void * v ) { %s result; result.r = interface_to_return( c##__veneer, v ); return result; } \\\n", interface_name, interface_name, interface_name );
+    printf( "static inline %s c##_%s_to_pass_to( integer_register target, void * v ) { %s result; result.r = interface_to_pass_to( target, c##__veneer, v ); return result; }\n\n", interface_name, interface_name, interface_name );
 
     l = interfaces[i] + 1;
 
@@ -371,6 +380,14 @@ void export_server_code()
       split( interface_name, lines[l++], export_interface_routine_case_code, crc );
     }
     printf( "  }\n" );
+
+    l = interfaces[i] + 1;
+
+    printf( "#define RETURN_FUNCTIONS_%s( c ) ", interface_name );
+    while (l < ends[i]) {
+      split( interface_name, lines[l++], export_interface_routine_return_functions, crc );
+    }
+    printf( "\n" );
   }
 }
 

@@ -171,5 +171,3 @@ extern void sleep_ms( uint64_t ms );
 
 static void dsb() { asm volatile ( "dsb sy" ); }
 
-#define STACK_PER_OBJECT( t, s ) struct t##_container { uint64_t stack[s]; t object; }
-#define SIMPLE_CALL_VENEER( t ) extern void t##_veneer(); asm ( "\t.section .text\n"#t"_veneer: mov sp, x0\n\tbl "#t"_handler\n\tsvc 0xfffd\n\t.previous" );

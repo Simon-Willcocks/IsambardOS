@@ -1,5 +1,9 @@
 #include "drivers.h"
 
+#ifndef ISAMBARD_GATE
+#error WUT
+#endif
+
 #ifndef STACK_SIZE
 #define STACK_SIZE 64
 #endif
@@ -21,7 +25,7 @@ asm ( ".section .init"
     "\n\tadr  x16, stack"
     "\n\tadd sp, x16, #8*"STACK_SIZE_STRING( STACK_SIZE )
     "\n\tbl entry"
-    "\n\tsvc 0xfffd"
+    "\n\tsvc " ENSTRING( ISAMBARD_RETURN )
 
     "\n.previous" );
 #endif
@@ -30,23 +34,25 @@ SYSTEM system = { .r = 0 }; // Initialised by _start code
 
 integer_register __attribute__(( aligned( 16 ) )) stack[STACK_SIZE];
 
+const uint32_t badly_written_driver_exception = 0xbadc0de;
+
 #define GLOBAL_FUNCTION( name ) "\n.global " #name "\n.type " #name ", function\n" #name ":"
 
 #define SYSTEM_CALL( name, code )  \
 asm ( ".section .text" \
     GLOBAL_FUNCTION( name ) \
     "\n\tstp x29, x30, [sp, #-16]!" \
-    "\n\tsvc " #code \
+    "\n\tsvc " ENSTRING( code ) \
     "\n\tldp x29, x30, [sp], #16" \
     "\n\tret" \
     "\n.previous" );
 
-SYSTEM_CALL( gate_function, 0xfff5 );
-SYSTEM_CALL( object_to_return, 0xfff9 );
-SYSTEM_CALL( object_to_pass_to, 0xfff8 );
-SYSTEM_CALL( duplicate_to_pass_to, 0xfff7 );
-SYSTEM_CALL( duplicate_to_return, 0xfff6 );
-SYSTEM_CALL( yield, 0xfffc );
+SYSTEM_CALL( gate_function, ISAMBARD_GATE );
+SYSTEM_CALL( interface_to_return, ISAMBARD_INTERFACE_TO_RETURN );
+SYSTEM_CALL( interface_to_pass_to, ISAMBARD_INTERFACE_TO_PASS );
+SYSTEM_CALL( duplicate_to_pass_to, ISAMBARD_DUPLICATE_TO_PASS );
+SYSTEM_CALL( duplicate_to_return, ISAMBARD_DUPLICATE_TO_RETURN );
+SYSTEM_CALL( yield, ISAMBARD_YIELD );
 
 asm ( ".section .text"
     GLOBAL_FUNCTION( Isambard_00 )
@@ -60,7 +66,7 @@ asm ( ".section .text"
     GLOBAL_FUNCTION( Isambard_31 )
     GLOBAL_FUNCTION( Isambard_41 )
     "\n\tstp x29, x30, [sp, #-16]!"
-    "\n\tsvc 0xfffe"
+    "\n\tsvc " ENSTRING( ISAMBARD_CALL )
     "\n\tldp x29, x30, [sp], #16"
     "\n\tret"
     "\n.previous" );

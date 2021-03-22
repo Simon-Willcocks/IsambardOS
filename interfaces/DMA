@@ -1,0 +1,9 @@
+interface DMA
+
+end
+
+interface DMA_SOURCE
+end
+
+interface DMA_SINK
+end

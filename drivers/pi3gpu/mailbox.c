@@ -94,15 +94,15 @@ integer_register mailbox_stack_lock = 0;
 integer_register __attribute__(( aligned(16) )) mailbox_stack[64];
 
 // Using the driver initialisation stack
-ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( MBOX, mailbox_stack_lock, mailbox_stack, 64 * 8 )
-ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( Channel, mailbox_stack_lock, mailbox_stack, 64 * 8 )
+ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( MBOX, RETURN_FUNCTIONS_GPU_MAILBOX( MBOX ), mailbox_stack_lock, mailbox_stack, 64 * 8 )
+ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( Channel, RETURN_FUNCTIONS_GPU_MAILBOX_CHANNEL( Channel ), mailbox_stack_lock, mailbox_stack, 64 * 8 )
 
 void expose_gpu_mailbox()
 {
-  MBOX_GPU_MAILBOX_register_service( "Pi GPU Mailboxes", NUMBER_from_integer_register( 0 ) );
+  MBOX_GPU_MAILBOX_register_service( "Pi GPU Mailboxes", 0 );
 }
 
-GPU_MAILBOX_CHANNEL MBOX__GPU_MAILBOX__claim_channel( MBOX o, NUMBER channel )
+void MBOX__GPU_MAILBOX__claim_channel( MBOX o, NUMBER channel )
 {
   o = o;
 
@@ -111,7 +111,7 @@ GPU_MAILBOX_CHANNEL MBOX__GPU_MAILBOX__claim_channel( MBOX o, NUMBER channel )
   memory_write_barrier(); // About to write to devices.mailbox
   devices.mailbox[0].config = 1; // Not-empty interrupt
 
-  return Channel_GPU_MAILBOX_CHANNEL_to_return( channel );
+  MBOX__GPU_MAILBOX__claim_channel__return( Channel_GPU_MAILBOX_CHANNEL_to_return( (void *) channel.r ) );
 }
 
 // Only two entities adjust the config member of the mailboxes,
@@ -155,7 +155,7 @@ static void send_message( uint32_t message, int dest, bool response_expected )
   asm ( "svc 0" );
 }
 
-NUMBER Channel__GPU_MAILBOX_CHANNEL__send_for_response( Channel c, NUMBER message )
+void Channel__GPU_MAILBOX_CHANNEL__send_for_response( Channel c, NUMBER message )
 {
   if (c.r > 15) asm ( "brk 8" );
   if (channel[c.r].state != idle) asm ( "brk 8" );
@@ -168,7 +168,7 @@ NUMBER Channel__GPU_MAILBOX_CHANNEL__send_for_response( Channel c, NUMBER messag
 
   channel[c.r].state = idle;
 
-  return NUMBER_from_integer_register( channel[c.r].message & ~0xf );
+  Channel__GPU_MAILBOX_CHANNEL__send_for_response__return( NUMBER_from_integer_register( channel[c.r].message & ~0xf ) );
 }
 
 #define MAX_REQUEST_SIZE 256 + 6

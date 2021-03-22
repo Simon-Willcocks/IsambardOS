@@ -1,3 +1,4 @@
+#include "isambard_syscalls.h"
 
 #ifndef WITHOUT_GATE
 static inline thread_switch handle_svc_gate( Core *core, thread_context *thread )
@@ -148,6 +149,10 @@ static inline thread_switch handle_svc_duplicate_to_return( Core *core, thread_c
 {
   Interface *interface = interface_from_index( thread->regs[0] );
 
+  if (0 == interface) {
+    BSOD( __COUNTER__ );
+  }
+
   if (interface->user != thread->current_map) {
     BSOD( __COUNTER__ );
   }
@@ -160,12 +165,19 @@ static inline thread_switch handle_svc_duplicate_to_pass_to( Core *core, thread_
   // FIXME lots of testing!
   Interface *interface = interface_from_index( thread->regs[1] );
 
+  if (0 == interface) {
+    BSOD( __COUNTER__ );
+  }
+ 
   if (interface->user != thread->current_map) {
     BSOD( __COUNTER__ );
   }
 
   Interface *target = interface_from_index( thread->regs[0] );
-
+  if (0 == target) {
+    BSOD( __COUNTER__ );
+  }
+ 
   if (target->user != thread->current_map) {
     BSOD( __COUNTER__ );
   }
@@ -180,6 +192,9 @@ static inline thread_switch handle_svc_interface_to_pass_to( Core *core, thread_
 
   // FIXME lots of testing!
   Interface *interface = interface_from_index( thread->regs[0] );
+  if (0 == interface) {
+    BSOD( __COUNTER__ );
+  }
   if (interface->user != thread->current_map) {
     BSOD( __COUNTER__ );
   }
@@ -401,22 +416,22 @@ static inline thread_switch handle_svc( Core *core, thread_context *thread, int 
   case 15:
     //led_blink( number & 15 );
     return result;
-  case 0xfff5: // gate (wait_until_woken or wake_thread)
+  case ISAMBARD_GATE: // gate (wait_until_woken or wake_thread)
     return handle_svc_gate( core, thread );
-  case 0xfff6:
+  case ISAMBARD_DUPLICATE_TO_RETURN:
     return handle_svc_duplicate_to_return( core, thread );
-  case 0xfff7:
+  case ISAMBARD_DUPLICATE_TO_PASS:
     return handle_svc_duplicate_to_pass_to( core, thread );
-  case 0xfff8: // Interface for provider
+  case ISAMBARD_INTERFACE_TO_PASS: // Interface for provider
     return handle_svc_interface_to_pass_to( core, thread );
-  case 0xfff9: // Interface for caller
+  case ISAMBARD_INTERFACE_TO_RETURN: // Interface for caller
     return handle_svc_interface_to_return( core, thread );
 
-  case 0xfffa: // Blocked. x17 -> lock variable, x18 -> thread code, do not change any thread registers
+  case ISAMBARD_LOCK_WAIT: // Blocked. x17 -> lock variable, x18 -> thread code, do not change any thread registers
     return handle_svc_wait_for_lock( core, thread );
-  case 0xfffb: // Release blocked x17 -> lock variable
+  case ISAMBARD_LOCK_RELEASE: // Release blocked x17 -> lock variable
     return handle_svc_release_lock( core, thread );
-  case 0xfffc: // Well tested
+  case ISAMBARD_YIELD: // Well tested
   {
     // Yield
     if (thread->next != thread) {
@@ -429,7 +444,23 @@ static inline thread_switch handle_svc( Core *core, thread_context *thread, int 
     }
     return result;
   }
-  case 0xfffd: // Well tested
+  case ISAMBARD_EXCEPTION: // Like return, but one parameter and V flag set in thread
+  {
+    // Not going to change thread, just map (and stack)
+    thread->pc = thread->stack_pointer->caller_return_address;
+    // Not changing thread, so SP hasn't been stored for restoration
+    asm volatile ( "\n\tmsr sp_el0, %[caller_sp]" : : [caller_sp] "r" (thread->stack_pointer->caller_sp) );
+    if (thread->current_map != thread->stack_pointer->caller_map) {
+      change_map( core, thread, thread->stack_pointer->caller_map );
+    }
+    thread->stack_pointer++;
+    thread->spsr |= (1<<28); // oVerflow flag set
+
+    asm ( "smc 4" );
+
+    return result;
+  }
+  case ISAMBARD_RETURN: // Well tested
   {
     // Inter-map return
 
@@ -441,10 +472,11 @@ static inline thread_switch handle_svc( Core *core, thread_context *thread, int 
       change_map( core, thread, thread->stack_pointer->caller_map );
     }
     thread->stack_pointer++;
+    thread->spsr &= ~(1<<28); // oVerflow flag clear
 
     return result;
   }
-  case 0xfffe: // Well tested
+  case ISAMBARD_CALL: // Well tested
   {
     // Inter-map call
 
@@ -452,6 +484,9 @@ static inline thread_switch handle_svc( Core *core, thread_context *thread, int 
     if (thread->regs[0] != 2 && thread->regs[1] < 0x100) asm ("wfi");
 
     Interface *interface = interface_from_index( thread->regs[0] );
+    if (0 == interface) {
+      BSOD( __COUNTER__ );
+    }
 
     if (interface->provider == system_map_index
      && interface->handler == System_Service_Map) {
@@ -492,7 +527,7 @@ static inline thread_switch handle_svc( Core *core, thread_context *thread, int 
 
     return result;
   }
-  case 0xffff:
+  case ISAMBARD_SYSTEM_REQUEST:
     return system_driver_request( core, thread );
   default: BSOD( __COUNTER__ );
   }

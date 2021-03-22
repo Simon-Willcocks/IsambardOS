@@ -293,6 +293,9 @@ static Interface *interfaces()
 
 static Interface *interface_from_index( uint32_t index )
 {
+  if (index > kernel_last_interface) {
+    return 0;
+  }
   return interfaces() + index;
 }
 
@@ -314,11 +317,12 @@ static void free_interface( Interface *i )
 static void new_memory_for_interfaces( integer_register new_last )
 {
   integer_register first_new = kernel_last_interface + 1;
+  Interface *ii = interfaces();
   for (integer_register i = first_new; i < new_last; i++) {
-    interface_from_index( i )->free.marker = free_marker;
-    interface_from_index( i )->free.next = i + 1;
+    ii[i].free.marker = free_marker;
+    ii[i].free.next = i + 1;
   }
-  Interface *last_interface = interface_from_index( new_last - 1 );
+  Interface *last_interface = &ii[new_last - 1];
   last_interface->free.next = 0;
   kernel_last_interface = new_last;
   kernel_free_interface = first_new;
@@ -629,6 +633,9 @@ static bool find_and_map_memory( Core *core, thread_context *thread, uint64_t fa
   }
   else {
     Interface *memory_provider = interface_from_index( vmb->memory_block );
+
+    if (0 == memory_provider)
+      BSOD( __COUNTER__ );
 
     if (memory_provider->provider == system_map_index
      && memory_provider->handler == System_Service_PhysicalMemoryBlock) {
@@ -1024,7 +1031,10 @@ static thread_switch system_driver_request( Core *core, thread_context *thread )
     // FIXME Check the provider, user, and, possibly, handler match the system driver's expectations
     {
     Interface *e = interface_from_index( thread->regs[1] );
-    thread->regs[0] = e->object.as_number;
+    if (e != 0)
+      thread->regs[0] = e->object.as_number;
+    else
+      BSOD( __COUNTER__ );
     }
     break;
   case Isambard_System_Service_ReadHeap:

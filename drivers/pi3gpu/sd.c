@@ -399,40 +399,19 @@ debug_last_acommand ++;
   block_index = 0;
   block_size = 512;
   block_data = (void*) 0x10200;
-  command( 17, 0 );
+  command( 17, 0xc2c0 ); // testblock.bin
   wait_until_woken(); // As data_thread...
 
   flush_and_invalidate_cache( (void*) 0x10200, 512 );
 }
 
-typedef struct { 
-  uint64_t lock; // Always first element in an exposed object.
+typedef struct EMMC { 
   uint64_t count;
-} emmc_service_object;
+} *EMMC;
 
-int emmc_service_handler( emmc_service_object *object, uint64_t call )
-{
-  object->count++;
-  switch (call) {
-  case 0x534400: // SD FIXME
-    {
-      initialise_sd_interface();
-      return 0;
-    }
-    break;
-  case 0x534401: // SD FIXME
-    {
-      initialise_sd_interface();
-      return 0;
-    }
-    break;
-  }
-  return 1;
-}
-
-STACK_PER_OBJECT( emmc_service_object, 64 );
-
-static struct emmc_service_object_container __attribute__(( aligned(16) )) emmc_service_singleton = { { 0 }, .object = { .lock = 0 } };
+static struct EMMC emmc_service_singleton = { 0 };
+uint64_t __attribute__(( aligned(16) )) emmc_stack[64];
+uint64_t emmc_lock = 0;
 
 ISAMBARD_INTERFACE( BLOCK_DEVICE )
 #include "interfaces/provider/BLOCK_DEVICE.h"
@@ -441,11 +420,9 @@ ISAMBARD_INTERFACE( TRIVIAL_NUMERIC_DISPLAY )
 
 #include "interfaces/client/TRIVIAL_NUMERIC_DISPLAY.h"
 
-typedef union { integer_register r; emmc_service_object *p; } EMMC;
-
 ISAMBARD_BLOCK_DEVICE__SERVER( EMMC )
 ISAMBARD_PROVIDER( EMMC, AS_BLOCK_DEVICE( EMMC ) )
-ISAMBARD_PROVIDER_UNLOCKED_PER_OBJECT_STACK( EMMC )
+ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( EMMC, RETURN_FUNCTIONS_BLOCK_DEVICE( EMMC ), emmc_lock, emmc_stack, 64 * 8 )
 
 PHYSICAL_MEMORY_BLOCK test_memory;
 uint32_t *mapped_memory = (void*) (0x10000);
@@ -498,8 +475,7 @@ void expose_emmc()
 
   debug_progress = 1;
 
-  EMMC emmc = { .p = &emmc_service_singleton.object };
-  EMMC_BLOCK_DEVICE_register_service( "EMMC", emmc );
+  EMMC_BLOCK_DEVICE_register_service( "EMMC", &emmc_service_singleton );
 
   debug_progress = 2;
   for (int i = 0; i < 100; i++) { yield(); mapped_memory[2] = i; }
@@ -512,5 +488,7 @@ void expose_emmc()
 
 void EMMC__BLOCK_DEVICE__read_4k_pages( EMMC o, PHYSICAL_MEMORY_BLOCK dest, NUMBER start, NUMBER count )
 {
+  o = o; dest = dest; start = start; count = count;
+  EMMC__BLOCK_DEVICE__read_4k_pages__return();
 }
 

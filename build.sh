@@ -80,6 +80,7 @@ build_driver memory_driver.ld.script "$MEMORY_DRIVER" &&
 
 for driver in $DRIVERS
 do
+  echo $driver
   build_driver driver.ld.script "$driver" || exit 1
 done
 
