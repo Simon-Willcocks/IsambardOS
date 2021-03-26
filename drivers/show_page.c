@@ -282,7 +282,7 @@ void TND__TRIVIAL_NUMERIC_DISPLAY__set_page_to_show( TND o, PHYSICAL_MEMORY_BLOC
 {
   o = o;
 
-  DRIVER_SYSTEM__map_at( driver_system(), page, NUMBER_from_integer_register( (uint64_t) &devices ) );
+  DRIVER_SYSTEM__map_at( driver_system(), page, NUMBER__from_integer_register( (uint64_t) &devices ) );
   page_to_display = page;
   page_start = start.r;
   TND__TRIVIAL_NUMERIC_DISPLAY__set_page_to_show__return();
@@ -301,8 +301,8 @@ void entry()
   FRAME_BUFFER fb = FRAME_BUFFER__get_service( "Frame Buffer", -1 );
 
   PHYSICAL_MEMORY_BLOCK screen_page = FRAME_BUFFER__get_frame_buffer( fb );
-  DRIVER_SYSTEM__map_at( driver_system(), screen_page, NUMBER_from_integer_register( mapped_address ) );
+  DRIVER_SYSTEM__map_at( driver_system(), screen_page, NUMBER__from_integer_register( mapped_address ) );
 
-  TND_TRIVIAL_NUMERIC_DISPLAY_register_service( "Trivial Numeric Display", 0 );
+  TND__TRIVIAL_NUMERIC_DISPLAY__register_service( "Trivial Numeric Display", 0 );
 }
 

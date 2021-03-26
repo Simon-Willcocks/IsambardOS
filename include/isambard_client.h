@@ -20,6 +20,8 @@ extern Object interface_to_pass_to( Object user, void *handler, void * value );
 #define ENSTRING2( n ) #n
 #define ENSTRING( n ) ENSTRING2( n )
 
+#define ISAMBARD_STACK( name, size_in_dwords ) uint64_t __attribute__(( aligned( 16 ) )) name[size_in_dwords]
+
 #define CLAIM_LOCK \
         "\n\t2:" \
         "\n\tldxr x16, [x17]" \
@@ -62,6 +64,12 @@ extern Object interface_to_pass_to( Object user, void *handler, void * value );
 "\n\tldp x29, x30, [sp, #5 * 16]" \
 "\n\tldp x19, x20, [sp], #16*6"
 
+#define RESTORE_SP_ON_ENTRY_TO_HANDLER \
+        "\n\t1:" \
+        "\n\tmov sp, x29" \
+        "\n\tldr x29, [sp]" \
+        "\n\tcbnz x29, 1b"
+
 #if 0
 #define FPR_LAYOUT                      \
         REG_PAIR ( d8,  d9, 112);       \
@@ -73,6 +81,25 @@ extern Object interface_to_pass_to( Object user, void *handler, void * value );
 #if 0
 //This doesn't work : how do you set the stack pointer, for the return function?
 #define ISAMBARD_PROVIDER_UNLOCKED_PER_OBJECT_STACK( type ) \
+// Copyright (c) Simon Willcocks 2021
+
+#define ISAMBARD_GATE 0xf001
+#define ISAMBARD_DUPLICATE_TO_RETURN 0xf002
+#define ISAMBARD_DUPLICATE_TO_PASS 0xf003
+#define ISAMBARD_INTERFACE_TO_RETURN 0xf004
+#define ISAMBARD_INTERFACE_TO_PASS 0xf005
+
+#define ISAMBARD_LOCK_WAIT 0xf006
+#define ISAMBARD_LOCK_RELEASE 0xf007
+
+#define ISAMBARD_YIELD 0xf008
+
+#define ISAMBARD_CALL 0xf009
+#define ISAMBARD_RETURN 0xf00a
+#define ISAMBARD_EXCEPTION 0xf00b
+
+// Only usable by system driver:
+#define ISAMBARD_SYSTEM_REQUEST 0xf00c
         asm ( "\t.section .text" \
               "\n"#type"_veneer: mov sp, x0" \
               STACK_CALLEE_SAVED_REGISTERS \
@@ -85,6 +112,72 @@ extern Object interface_to_pass_to( Object user, void *handler, void * value );
               "\n\t.previous" );
 #endif
 
+#define THREADPOOL( label, size, count ) \
+    struct label##_threadpool { uint64_t frames[count][size]; } __attribute__(( aligned(16) )) label##_threadpool; \
+    struct label##_threadpool *label##_threadpool_free = 0; \
+    uint32_t label##_threadpool_waiting_thread = 0; \
+    void label##_initialise() { for (int i = 1; i < count; i++) { label##_threadpool.frames[i][size-1] = (uint64_t) label##_threadpool.frames[i]; }; label##_threadpool_free = &label##_threadpool+1; }
+
+// free is a uint64_t *, and points to the top dword of the first free stack (i.e. on an 8-byte boundary)
+// lock is a uint64_t, initialised to zero, it will be claimed for the *taking* of a stack from the pool, only
+// waiting_thread is a uint32_t containing the thread code of a thread waiting for a stack
+// Description:
+//   Thread claims lock, to be allowed to view/modify free
+//   Before checking free, stores the thread ID in waiting_thread
+//     Threads relinquishing their stack will use ldxr/stxr to update free
+//     The only reason the lock holder can fail to write to free is if another stack has become free in the meantime
+//   Read the content of free. If zero, wait_until_woken (preserving x0, x1, clobbers x16, x17), retry
+//   Read the pointer to the next stack, try to store it in free, if fails, retry (a stack has been relinquished)
+//   Release the lock, make the call.
+#define ISAMBARD_PROVIDER_THREADPOOL( type, return_functions, label ) \
+        asm ( "\t.section .text" \
+        "\n"#type"__veneer:" \
+        "\n\tadr x17, "#label"_threadpool_lock" \
+        CLAIM_LOCK \
+        "\n\tadr x16, "#label"_threadpool_waiting_thread" \
+        "\n\tstr w18, [x16]" \
+        "\n\tadr x16, "#label"_threadpool_free" \
+        \
+        "\n2:" \
+        "\n\tdsb sy" \
+        "\n\tldxr x30, [x16]" \
+        "\n\tadd sp, x30, #8" \
+        "\n\tcbnz x30, 1f" \
+        \
+        "\n\tclrex" \
+        "\n\tmov x29, x0" \
+        "\n\tmov x30, x1" \
+        "\n\rmov x0, #0" \
+        "\n\rmov x1, #0" \
+        "\n\tsvc " ENSTRING( ISAMBARD_GATE ) \
+        "\n\tmov x0, x29" \
+        "\n\tmov x1, x30" \
+        "\n\tadr x16, "#label"_threadpool_free" \
+        "\n\tadr x17, "#label"_threadpool_lock" \
+        "\n\tb 2b" \
+        \
+        "\n1:" \
+        "\n\tldr x29, [x30]" \
+        "\n\tstxr w30, x29, [x16]" \
+        "\n\tcbnz w30, 2b" \
+        "\n\tadr x16, "#label"_threadpool_waiting_thread" \
+        "\n\tstr wzr, [x16]" \
+        RELEASE_LOCK \
+        "\n\tmov x29, #0" \
+        "\n\tbl "#type"__call_handler" \
+        "\n\tldr w0, badly_written_driver_exception" \
+        "\n"#type"__exception:" \
+        RESTORE_SP_ON_ENTRY_TO_HANDLER \
+        RESTORE_CALLEE_SAVED_REGISTERS \
+"\nmov x27, x0" \
+        "\n\tsvc #"ENSTRING( ISAMBARD_EXCEPTION ) \
+        return_functions \
+        "\n"#type"__return:" \
+        RESTORE_SP_ON_ENTRY_TO_HANDLER \
+        RESTORE_CALLEE_SAVED_REGISTERS \
+        "\n\tsvc #"ENSTRING( ISAMBARD_RETURN ) \
+        "\n\t.previous" );
+
 #define ISAMBARD_PROVIDER_NO_LOCK_AND_SINGLE_STACK( type, return_functions, stack, stack_size ) \
         asm ( "\t.section .text" \
         "\n"#type"__veneer: adr x17, "#stack \
@@ -96,6 +189,7 @@ extern Object interface_to_pass_to( Object user, void *handler, void * value );
         "\n\tadr x17, "#stack \
         "\n\tadd sp, x17, #" #stack_size "-" ENSTRING( STORED_REGISTER_SPACE ) \
         RESTORE_CALLEE_SAVED_REGISTERS \
+"\nmov x27, x0" \
         "\n\tsvc #"ENSTRING( ISAMBARD_EXCEPTION ) \
         return_functions \
         "\n"#type"__return:" \
@@ -120,6 +214,7 @@ extern Object interface_to_pass_to( Object user, void *handler, void * value );
         "\n\tadr x17, "#stack \
         "\n\tadd sp, x17, #" #stack_size "-" ENSTRING( STORED_REGISTER_SPACE ) \
         RESTORE_CALLEE_SAVED_REGISTERS \
+"\nmov x27, x0" \
         "\n\tsvc #"ENSTRING( ISAMBARD_EXCEPTION ) \
         return_functions \
         "\n"#type"__return:" \
@@ -173,6 +268,7 @@ struct ippolas_veneer_data {
         "\n\tldr x16, [x17, #8]" \
         "\n\tsub sp, x16, #"ENSTRING( STORED_REGISTER_SPACE ) \
         RESTORE_CALLEE_SAVED_REGISTERS \
+"\nmov x27, x0" \
         RELEASE_LOCK \
         "\n\tsvc #"ENSTRING( ISAMBARD_EXCEPTION ) \
         \
@@ -188,13 +284,13 @@ struct ippolas_veneer_data {
 
 #define ISAMBARD_INTERFACE( name ) \
 typedef struct { integer_register r; } name; \
-static inline name name##_from_integer_register( integer_register r ) { name result = { .r = r }; return result; } \
-static inline name name##_duplicate_to_return( name o ) { name result; result.r = duplicate_to_return( (integer_register) o.r ); return result; } \
-static inline name name##_duplicate_to_pass_to( integer_register target, name o ) { name result; result.r = duplicate_to_pass_to( target, (integer_register) o.r ); return result; }
+static inline name name##__from_integer_register( integer_register r ) { name result = { .r = r }; return result; } \
+static inline name name##__duplicate_to_return( name o ) { name result; result.r = duplicate_to_return( (integer_register) o.r ); return result; } \
+static inline name name##__duplicate_to_pass_to( integer_register target, name o ) { name result; result.r = duplicate_to_pass_to( target, (integer_register) o.r ); return result; }
 
 ISAMBARD_INTERFACE( NUMBER )
 // Special, for NUMBER only:
-static inline NUMBER NUMBER_from_pointer( void *p ) { NUMBER result = { .r = (integer_register) p }; return result; }
+static inline NUMBER NUMBER__from_pointer( void *p ) { NUMBER result = { .r = (integer_register) p }; return result; }
 
 extern void Isambard_00( integer_register o, uint32_t call ); 
 extern integer_register Isambard_01( integer_register o, uint32_t call ); 

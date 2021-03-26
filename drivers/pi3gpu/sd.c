@@ -8,7 +8,7 @@
 
 #include "devices.h"
 
-#define N( n ) NUMBER_from_integer_register( n )
+#define N( n ) NUMBER__from_integer_register( n )
 
 static uint32_t volatile command_thread = 0;
 static uint32_t volatile data_thread = 0;
@@ -86,50 +86,63 @@ void emmc_interrupt()
   }
 }
 
-enum { SD_Card, UART0, UART1, USB_HCD, I2C0, I2C1, I2C2, SPI, CCP2TX, Unknown_RPi4_1, Unknown_RPi4_2 } device_ids;
+enum device_id { SD_Card, UART0, UART1, USB_HCD, I2C0, I2C1, I2C2, SPI, CCP2TX, Unknown_RPi4_1, Unknown_RPi4_2 };
+enum device_power_state { POWER_STATE_OFF = 0, POWER_STATE_ON = 1, DOES_NOT_EXIST = 2, ON_BUT_DOES_NOT_EXIST = 3 };
 
-// This single_mailbox_tag_access interface is incredibly thread UNSAFE!
-// Updating a structure without a lock...
-static bool device_exists( uint32_t id )
+static enum device_power_state power_state( enum device_id id )
 {
-  mailbox_request_buffer[0] = id;
-  single_mailbox_tag_access( 0x00020001, 8 );
-  return 0 == (mailbox_request_buffer[1] & 2);
+  uint32_t __attribute(( aligned( 16 ) )) request[8] = { sizeof( request ), 0, 0x00020001, 8, 0, id, 0, 0 };
+  mailbox_tag_request( request );
+
+  if (request[1] != 0x80000000 || request[4] != 0x80000008) {
+    return false;
+  }
+  return request[6];
 }
 
-static bool power_on_sd_host()
+static bool power_up( enum device_id id )
 {
-	debug_last_command = 1;
-  if (!device_exists( SD_Card )) return false;
-  if (0 == (mailbox_request_buffer[1] & 1)) {
-    // Is off.
-    mailbox_request_buffer[0] = SD_Card;
-    mailbox_request_buffer[1] = 1; // Power on, no wait.
-    single_mailbox_tag_access( 0x00028001, 8 );
-    // How long will this take?
-    mailbox_request_buffer[0] = SD_Card;
-    single_mailbox_tag_access( 0x00020002, 8 );
+  enum device_power_state state = power_state( id );
 
-    sleep_ms( mailbox_request_buffer[1] + 1 ); // +1 just in case
+  if (state == POWER_STATE_OFF) {
+    uint32_t __attribute(( aligned( 16 ) )) power_on_request[13] =
+        { sizeof( power_on_request ), 0,
+		0x00028001, 8, 0, id, 1,           // Power up
+		0x00020002, 8, 0, id, 0,           // How long will it take?
+                0 };
+    // Power on, no wait (we'll sleep).
+    mailbox_tag_request( power_on_request );
+
+    if (power_on_request[1] != 0x80000000 || power_on_request[4] != 0x80000008
+     || power_on_request[9] != 0x80000000 || power_on_request[10] != 0x80000008
+     || power_on_request[11] != id) {
+      return false;
+    }
+
+    sleep_ms( (power_on_request[11] + 999)/1000 ); // Microseconds
 
     // Is on?
-    mailbox_request_buffer[0] = SD_Card;
-    single_mailbox_tag_access( 0x00020001, 8 );
-    return 1 == mailbox_request_buffer[1];
+    state = power_state( id );
+
+    return state == POWER_STATE_ON;
   }
   return true;
 }
 
-enum { CLK_reserved, CLK_EMMC, CLK_UART, CLK_ARM,
-       CLK_CORE, CLK_V3D, CLK_H264, CLK_ISP,
-       CLK_SDRAM, CLK_PIXEL, CLK_PWM, CLK_HEVC,
-       CLK_EMMC2, CLK_M2MC, CLK_PIXEL_BVB };
+enum clock { CLK_reserved, CLK_EMMC, CLK_UART, CLK_ARM,
+             CLK_CORE, CLK_V3D, CLK_H264, CLK_ISP,
+             CLK_SDRAM, CLK_PIXEL, CLK_PWM, CLK_HEVC,
+             CLK_EMMC2, CLK_M2MC, CLK_PIXEL_BVB };
 
-static uint32_t base_clock_rate( uint32_t id )
+static uint32_t base_clock_rate( enum clock clock_id )
 {
-  mailbox_request_buffer[0] = id;
-  single_mailbox_tag_access( 0x00030002, 8 );
-  return mailbox_request_buffer[1];
+  uint32_t __attribute(( aligned( 16 ) )) request[8] = { sizeof( request ), 0, 0x00030002, 8, 0, clock_id, 0, 0 };
+  mailbox_tag_request( request );
+
+  if (request[1] != 0x80000000 || request[4] != 0x80000008) {
+    return 0;
+  }
+  return request[6];
 }
 
 static uint32_t const cmds[] = { 
@@ -200,17 +213,17 @@ debug_last_acommand = acmd;
 
 void initialise_sd_interface()
 {
-  debug_progress = 3; yield();
+  debug_progress = 3;
 
   memory_write_barrier(); // About to write to devices.interrupts
   devices.interrupts.Enable_IRQs_2 = 0x40000000; // Arasan interrupt.
   dsb();
 
-  if (!power_on_sd_host()) {
-    debug_progress = 0xf; wait_until_woken();
+  if (!power_up( SD_Card )) {
+    debug_progress = 0xf1; wait_until_woken();
     for (;;) { asm volatile ( "brk 2" ); }
   }
-  debug_progress = 8; yield();
+  debug_progress = 8;
 
   memory_write_barrier(); // About to write to devices.emmc
 
@@ -432,8 +445,8 @@ uint32_t initialisation_thread = -1;
 
 void show_page_thread()
 {
-  test_memory = SYSTEM__allocate_memory( system, NUMBER_from_integer_register( 4096 ) );
-  DRIVER_SYSTEM__map_at( driver_system(), test_memory, NUMBER_from_pointer( mapped_memory ) );
+  test_memory = SYSTEM__allocate_memory( system, NUMBER__from_integer_register( 4096 ) );
+  DRIVER_SYSTEM__map_at( driver_system(), test_memory, NUMBER__from_pointer( mapped_memory ) );
 
   mapped_memory[0] = 0;
   mapped_memory[1] = 0;
@@ -442,7 +455,7 @@ void show_page_thread()
 
   wake_thread( initialisation_thread );
 
-  TRIVIAL_NUMERIC_DISPLAY__set_page_to_show( tnd, test_memory, NUMBER_from_pointer( mapped_memory ) );
+  TRIVIAL_NUMERIC_DISPLAY__set_page_to_show( tnd, test_memory, NUMBER__from_pointer( mapped_memory ) );
   for (;;) {
     mapped_memory[1] ++;
     yield();
@@ -475,10 +488,10 @@ void expose_emmc()
 
   debug_progress = 1;
 
-  EMMC_BLOCK_DEVICE_register_service( "EMMC", &emmc_service_singleton );
+  EMMC__BLOCK_DEVICE__register_service( "EMMC", &emmc_service_singleton );
 
   debug_progress = 2;
-  for (int i = 0; i < 100; i++) { yield(); mapped_memory[2] = i; }
+  for (int i = 0; i < 100; i++) { sleep_ms( 20 ); mapped_memory[2] = i; }
 
   initialise_sd_interface();
   debug_progress = 20;

@@ -9,7 +9,14 @@
 
 #include "devices.h"
 
-unsigned long long __attribute__(( aligned( 16 ) )) interrupt_stack[64] = { 0x33333333 }; // Just a marker
+ISAMBARD_INTERFACE( GPU_MAILBOX_MANAGER )
+ISAMBARD_INTERFACE( GPU_MAILBOX )
+ISAMBARD_INTERFACE( GPU_MAILBOX_CLIENT )
+
+// Both intimitely related interfaces in the one file
+#include "interfaces/client/GPU_MAILBOX.h"
+
+ISAMBARD_STACK( interrupt_stack, 64 );
 
 typedef struct {
   uint64_t lock;
@@ -78,11 +85,9 @@ void GPU__INTERRUPT_HANDLER__interrupt( GPU o )
 
 void map_page( uint64_t physical, void *virtual )
 {
-  PHYSICAL_MEMORY_BLOCK device_page = DRIVER_SYSTEM__get_device_page( driver_system(), NUMBER_from_integer_register( physical ) );
-  DRIVER_SYSTEM__map_at( driver_system(), device_page, NUMBER_from_integer_register( (integer_register) virtual ) );
+  PHYSICAL_MEMORY_BLOCK device_page = DRIVER_SYSTEM__get_device_page( driver_system(), NUMBER__from_integer_register( physical ) );
+  DRIVER_SYSTEM__map_at( driver_system(), device_page, NUMBER__from_integer_register( (integer_register) virtual ) );
 }
-
-GPU_MAILBOX_CHANNEL gpu_mailbox = {};
 
 void entry()
 {
@@ -91,14 +96,11 @@ void entry()
   map_page( 0x3f200000, (void*) &devices.gpio );
   map_page( 0x3f003000, (void*) &devices.system_timer );
 
-  INTERRUPT_HANDLER obj = GPU_INTERRUPT_HANDLER_to_pass_to( system.r, &gpu_interrupt_handler_singleton );
+  INTERRUPT_HANDLER obj = GPU__INTERRUPT_HANDLER__to_pass_to( system.r, &gpu_interrupt_handler_singleton );
 
-  DRIVER_SYSTEM__register_interrupt_handler( driver_system(), obj, NUMBER_from_integer_register( 8 ) );
+  DRIVER_SYSTEM__register_interrupt_handler( driver_system(), obj, NUMBER__from_integer_register( 8 ) );
 
-  expose_gpu_mailbox();
-
-  GPU_MAILBOX factory = GPU_MAILBOX__get_service( "Pi GPU Mailboxes", -1 );
-  channel8 = GPU_MAILBOX__claim_channel( factory, NUMBER_from_integer_register( 8 ) );
+  expose_gpu_mailbox(); // Needed by FB, EMMC
 
   memory_write_barrier(); // About to write to devices.timer
   devices.timer.load = (1 << 23) - 1; // Max load value for 23 bit counter

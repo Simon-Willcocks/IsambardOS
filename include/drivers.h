@@ -23,13 +23,12 @@ static inline NUMBER __attribute__ ((pure)) name_code( const char *name )
       crc = (crc >> 1) ^ (-(int)(crc & 1) & Polynomial);
     }
   }
-  return NUMBER_from_integer_register( ~crc );
+  return NUMBER__from_integer_register( ~crc );
 }
 
 static inline void sleep_ms( integer_register timeout );
 ISAMBARD_INTERFACE( SYSTEM )
 extern SYSTEM system; // Initialised by _start code
-
 
 ISAMBARD_INTERFACE( DRIVER_SYSTEM )
 ISAMBARD_INTERFACE( SERVICE )
@@ -41,13 +40,13 @@ ISAMBARD_INTERFACE( INTERRUPT_HANDLER )
 extern integer_register stack_lock;
 extern integer_register __attribute__(( aligned( 16 ) )) stack[]; // Sized in libdriver.c
 
-static inline DRIVER_SYSTEM driver_system() { return DRIVER_SYSTEM_from_integer_register( system.r ); }
+static inline DRIVER_SYSTEM driver_system() { return DRIVER_SYSTEM__from_integer_register( system.r ); }
 
 extern bool yield();
 
 static inline integer_register create_thread( void *code, uint64_t *stack_top )
 {
-  return SYSTEM__create_thread( system, NUMBER_from_integer_register( (integer_register) code ), NUMBER_from_integer_register( (integer_register) stack_top ) ).r;
+  return SYSTEM__create_thread( system, NUMBER__from_integer_register( (integer_register) code ), NUMBER__from_integer_register( (integer_register) stack_top ) ).r;
 }
 
 /* Accesses to the same peripheral will always arrive and return in-order. It is only when

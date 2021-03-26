@@ -516,12 +516,6 @@ void change_map( Core *core, thread_context *thread, interface_index new_map )
     BSOD( __COUNTER__ );
   }
 
-  // The memory_allocator_map may only be entered from the system map
-  if (new_map == memory_allocator_map_index
-   && core->loaded_map != system_map_index) {
-    BSOD( __COUNTER__ );
-  }
-
   if (core->loaded_map != new_map) {
     load_this_map( core, new_map );
   }
@@ -1232,8 +1226,8 @@ asm ( "mov x26, %[r]" : : [r] "r" (thread->regs[30]) );
       break;
     default:
       {
-        // switch ((esr >> 29) & 0x7) { // Top bits
-        switch ((esr >> 26) & 0x7) { // Lower 3 bits
+        switch ((esr >> 29) & 0x7) { // Top bits
+        // switch ((esr >> 26) & 0x7) { // Lower 3 bits
         case 0: BSOD( 5 ); break;
         case 1: BSOD( 6 ); break;
         case 2: BSOD( 7 ); break;

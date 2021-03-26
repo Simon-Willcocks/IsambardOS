@@ -293,9 +293,9 @@ void initialise_display()
 {
 #define overscan 24
 #ifdef overscan
-  static uint32_t __attribute__(( aligned( 16 ) )) volatile mailbox_request[33] = {
+  static uint32_t __attribute__(( aligned( 16 ) )) mailbox_request[33] = {
 #else
-  static uint32_t __attribute__(( aligned( 16 ) )) volatile mailbox_request[26] = {
+  static uint32_t __attribute__(( aligned( 16 ) )) mailbox_request[26] = {
 #endif
           sizeof( mailbox_request ), 0, // Message buffer size, request
           // Tags: Tag, buffer size, request code, buffer
@@ -315,32 +315,17 @@ void initialise_display()
 #endif
           0 }; // End of tags tag
 
-  NUMBER mailbox_request_PA = DRIVER_SYSTEM__physical_address_of( driver_system(),
-                NUMBER_from_pointer( (void*) &mailbox_request ) );
-
-  NUMBER response;
-
-  // If the content of the structure is no longer fixed, the following line will be needed:
-  // flush_and_invalidate_cache( mailbox_request, mailbox_request[0] );
-
-  response = GPU_MAILBOX_CHANNEL__send_for_response( channel8, mailbox_request_PA );
-
-  flush_and_invalidate_cache( mailbox_request, mailbox_request[0] );
-
-  if (response.r != mailbox_request_PA.r) {
-     for (;;) { led_blink( 2 ); }
-  }
-
-  if ((mailbox_request[1] & 0x80000000) == 0) {
-    for (;;) { led_blink( 3 ); }
-  }
+  mailbox_tag_request( mailbox_request );
 
   physical_address = (mailbox_request[5] & 0x3fffffff);
   memory_size = mailbox_request[6];
 
   uint32_t fake_size = (memory_size + (2 << 20)-1) & ~((2ull << 20)-1);
   // Size made to multiple of 2M. Not true, but quick to implement! FIXME when find_and_map_memory is more refined
-  screen_page = DRIVER_SYSTEM__get_physical_memory_block( driver_system(), NUMBER_from_integer_register( physical_address ), NUMBER_from_integer_register( fake_size ) );
+  screen_page = DRIVER_SYSTEM__get_physical_memory_block( driver_system(), NUMBER__from_integer_register( physical_address ), NUMBER__from_integer_register( fake_size ) );
+
+  map_screen();
+  show_word( 100, 100, 0, White );
 }
 
 void map_screen()
@@ -348,7 +333,7 @@ void map_screen()
   if (!screen_mapped) {
     while (screen_page.r == 0) { initialise_display(); }
 
-    DRIVER_SYSTEM__map_at( driver_system(), screen_page, NUMBER_from_integer_register( (uint64_t) mapped_address ) );
+    DRIVER_SYSTEM__map_at( driver_system(), screen_page, NUMBER__from_integer_register( (uint64_t) mapped_address ) );
     screen_mapped = true;
   }
 }
@@ -364,7 +349,7 @@ ISAMBARD_INTERFACE( FRAME_BUFFER )
 #include "interfaces/provider/FRAME_BUFFER.h"
 
 typedef fb_service_object *FB;
-uint64_t __attribute__(( aligned( 16 ) )) fb_stack[64];
+ISAMBARD_STACK( fb_stack, 64 );
 uint64_t fb_lock = 0;
 
 ISAMBARD_FRAME_BUFFER__SERVER( FB )
@@ -373,12 +358,13 @@ ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( FB, RETURN_FUNCTIONS_FRAME_BUFFER( FB )
 
 void expose_frame_buffer()
 {
-  FB_FRAME_BUFFER_register_service( "Frame Buffer", &fb_service_singleton );
+  FB__FRAME_BUFFER__register_service( "Frame Buffer", &fb_service_singleton );
 }
 
 void FB__FRAME_BUFFER__get_frame_buffer( FB o )
 {
   o = o;
   map_screen();
-  FB__FRAME_BUFFER__get_frame_buffer__return( PHYSICAL_MEMORY_BLOCK_duplicate_to_return( screen_page ) );
+  show_word( 100, 100, 0, White );
+  FB__FRAME_BUFFER__get_frame_buffer__return( PHYSICAL_MEMORY_BLOCK__duplicate_to_return( screen_page ) );
 }

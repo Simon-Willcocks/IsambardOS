@@ -137,7 +137,7 @@ void print_typedef( char *type )
     printf( "#ifndef %s_DEFINED\n", type );
     printf( "#define %s_DEFINED\n", type );
     printf( "typedef struct { integer_register r; } %s;\n", type );
-    printf( "static inline %s %s_from_integer_register( integer_register r ) __attribute__ ((pure)) { %s result = { .r = r }; return result; }\n", type, type, type );
+    printf( "static inline %s %s__from_integer_register( integer_register r ) __attribute__ ((pure)) { %s result = { .r = r }; return result; }\n", type, type, type );
     printf( "#endif\n" );
     if (p - printed_types >= (sizeof( printed_types ) / sizeof( printed_types[0] )-1)) {
       printf( "// Too many unique types, modify tools/interfaces.c!\n" );
@@ -209,7 +209,7 @@ void export_interface_routine_client_code( const char *interface_name, const cha
   if (out_params > 0) {
     printf( "  return " );
     print_parameter_type( out );
-    printf( "_from_integer_register( Isambard_" );
+    printf( "__from_integer_register( Isambard_" );
   }
   else {
     printf( "  Isambard_" );
@@ -283,11 +283,11 @@ void export_client_code()
       printf( "{\n" );
       printf( "  NUMBER result = {};\n" );
       printf( "  do {\n" );
-      printf( "    result = SYSTEM__get_service( system, name_code( name ), NUMBER_from_integer_register( 0x%08x ), NUMBER_from_integer_register( 0 ) );\n", crc );
+      printf( "    result = SYSTEM__get_service( system, name_code( name ), NUMBER__from_integer_register( 0x%08x ), NUMBER__from_integer_register( 0 ) );\n", crc );
       printf( "    if (timeout > 0) { timeout--; }\n" );
       printf( "    if (result.r == 0 && timeout != 0) { sleep_ms( 1 ); }\n" );
       printf( "  } while (timeout != 0 && result.r == 0);\n" );
-      printf( "  return %s_from_integer_register( result.r );\n", interface_name );
+      printf( "  return %s__from_integer_register( result.r );\n", interface_name );
       printf( "}\n" );
     }
 
@@ -335,7 +335,7 @@ void export_interface_routine_case_code( const char *interface_name, const char 
   for (int i = 0; i < in_params; i++) {
     printf( ", " );
     print_parameter_type( p );
-    printf( "_from_integer_register( p%d )", i + 1 );
+    printf( "__from_integer_register( p%d )", i + 1 );
     p = strchr( p, ',' ) + 1;
   }
   printf( " ); \\\n" );
@@ -368,10 +368,12 @@ void export_server_code()
     // Return from the handler routines using the provided calls
     printf( "void c##__call_handler( c o, integer_register call, integer_register p1, integer_register p2, integer_register p3, integer_register p4 ); \\\n" );
 
-    printf( "static inline void c##_%s_register_service( const char *name, void * v ) { SYSTEM__register_service( system, name_code( name ), NUMBER_from_integer_register( interface_to_pass_to( system.r, c##__veneer, v ) ), NUMBER_from_integer_register( 0x%08x ) ); } \\\n", interface_name, crc );
+    if (0 != strcmp( interface_name, "SYSTEM" )) {
+      printf( "static inline void c##__%s__register_service( const char *name, void * v ) { SYSTEM__register_service( system, name_code( name ), NUMBER__from_integer_register( interface_to_pass_to( system.r, c##__veneer, v ) ), NUMBER__from_integer_register( 0x%08x ) ); } \\\n", interface_name, crc );
+    }
 
-    printf( "static inline %s c##_%s_to_return( void * v ) { %s result; result.r = interface_to_return( c##__veneer, v ); return result; } \\\n", interface_name, interface_name, interface_name );
-    printf( "static inline %s c##_%s_to_pass_to( integer_register target, void * v ) { %s result; result.r = interface_to_pass_to( target, c##__veneer, v ); return result; }\n\n", interface_name, interface_name, interface_name );
+    printf( "static inline %s c##__%s__to_return( void * v ) { %s result; result.r = interface_to_return( c##__veneer, v ); return result; } \\\n", interface_name, interface_name, interface_name );
+    printf( "static inline %s c##__%s__to_pass_to( integer_register target, void * v ) { %s result; result.r = interface_to_pass_to( target, c##__veneer, v ); return result; }\n\n", interface_name, interface_name, interface_name );
 
     l = interfaces[i] + 1;
 
@@ -458,7 +460,17 @@ int main( int argc, char *argv[] )
 
   while (lines[last_line] = strtok( string, "\n" )) {
     string = 0; // For second and subsequent calls to strtok
-    if (strlen( lines[last_line] ) == 0) continue;
+    // Strip leading whitespace
+    while (lines[last_line][0] != '\0'
+       && (lines[last_line][0] == ' ' || lines[last_line][0] == '\t')) {
+      lines[last_line]++;
+    }
+    // Ignore blank lines
+    if (lines[last_line][0] == '\0') continue;
+    // ...and comments
+    if (lines[last_line][0] == '#') continue;
+    if (lines[last_line][0] == '/'
+     && lines[last_line][1] == '/') continue;
 
     if (0 == strncmp( lines[last_line], "interface ", 10)) {
       interfaces[last_interface++] = last_line;

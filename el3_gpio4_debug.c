@@ -362,22 +362,25 @@ static void show_page( uint32_t *number )
 }
 
 uint64_t __attribute__(( aligned( 16 ) )) smc_stack[64];
-void showme()
+
+void showregs()
 {
-  uint32_t *p = (void*) 0x0e400000; // Quick and dirty
   uint64_t pc;
 #define SHOW( r, x, y ) { uint32_t pc; asm ( "mrs %[pc], "#r : [pc] "=r" (pc) ); show_word( x, y, pc, Yellow ); }
 #define SHOWL( r, x, y ) { uint64_t pc; asm ( "mrs %[pc], "#r : [pc] "=r" (pc) ); show_qword( x, y, pc, Yellow ); }
-  SHOWL( ELR_EL1, 100, 10 );
-  SHOWL( FAR_EL1, 300, 10 );
-  SHOW( ESR_EL1, 500, 10 );
-  SHOWL( TTBR0_EL1, 600, 10 );
+  SHOWL( ELR_EL1, 100, 900 );
+  SHOWL( FAR_EL1, 300, 900 );
+  SHOW( ESR_EL1, 500, 900 );
+  SHOWL( TTBR0_EL1, 600, 900 );
 
-  SHOW( ELR_EL3, 100, 20 );
-  SHOW( FAR_EL3, 200, 20 );
-  SHOW( ESR_EL3, 300, 20 );
+  SHOWL( ELR_EL3, 100, 920 );
+  SHOWL( FAR_EL3, 300, 920 );
+  SHOW( ESR_EL3, 600, 920 );
 
-#define SHOW_REG( n ) asm ( "mov %[pc], x"#n : [pc] "=r" (pc) ); show_qword( 1600, n * 10, pc, White );
+#define   SHOW_REG( n ) asm ( "mov %[pc], x"#n : [pc] "=r" (pc) ); show_qword( 1600, n * 10, pc, White );
+  SHOW_REG( 15 );
+  SHOW_REG( 16 );
+  SHOW_REG( 17 );
   SHOW_REG( 18 );
   SHOW_REG( 19 );
   SHOW_REG( 20 );
@@ -391,18 +394,25 @@ void showme()
   SHOW_REG( 28 );
   SHOW_REG( 29 );
   SHOW_REG( 30 );
+}
 
-  uint64_t *page = (void*) 0x8000;
-  // page = page[511] & ~0xfff;
-  show_page( (void*) page );
-  for (uint64_t i = 0; i < LED_BLINK_TIME * 400; i++) { asm volatile ( "" ); }
+void showme()
+{
+  led_blink( 0x3f200000, 3 );
+  for (;;) {
+    showregs();
+    uint64_t *page = (void*) 0x8000;
+    // page = page[511] & ~0xfff;
+    show_page( (void*) page );
+    for (uint64_t i = 0; i < LED_BLINK_TIME * 400; i++) { asm volatile ( "" ); }
 
-  for (;;)
     for (int i = 0; i < 0x30000; i+= 0x1000)
     {
+      showregs();
       show_page( (void*) i );
       for (uint64_t i = 0; i < LED_BLINK_TIME * 10; i++) { asm volatile ( "" ); }
     }
+  }
 }
 
 #define AARCH64_VECTOR_TABLE_LOWER_AARCH64_SYNC_CODE asm( "adr x16, smc_stack+64*8\n\tmov sp, x16\n\tbl showme" );

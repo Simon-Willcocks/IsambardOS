@@ -1,6 +1,18 @@
 /* Copyright 2021 Simon Willcocks */
 
-/* Not very general, yet.
+/* I believe the following to be true:
+ * The GPU runs independently of the ARM,
+ * The GPU can process at least one message at a time, maybe more than one,
+ * The FIFO mailbox has a fixed capacity.
+ * The mailbox messages point to buffers by their physical addresses
+ * The reponse mailbox will return those buffers through the other mailbox
+ * It makes no sense to send a buffer to the GPU a second time, without an intermediate response
+ * The buffers don't necessarily have to be returned in the same order they were sent, even in the same channel
+ * It is possible that an interface allows the GPU to allocate buffers, and pass them to the ARM.
+ * The mailboxes can interrupt the ARM when they are not-empty, and not-full. (At least.)
+ *
+ *
+ * Not very general, yet.
  * Allows a channel owner to send a request, and return to them with a response.
  * Does not allow ARM to act as a server.
  * Does not allow multiple requests on a channel at a time.
@@ -10,22 +22,29 @@
 #include "devices.h"
 #include "exclusive.h"
 
+ISAMBARD_INTERFACE( GPU_MAILBOX_MANAGER )
+ISAMBARD_INTERFACE( GPU_MAILBOX )
+ISAMBARD_INTERFACE( GPU_MAILBOX_CLIENT )
+
 #define assert( c ) if (!(c)) { asm ( "brk 7" ); }
 
-struct {
+THREADPOOL( mbox_pool, 32, 32 )
+
+typedef struct mailbox_channel mailbox_channel;
+typedef struct mailbox_channel *MBOX;
+
+struct mailbox_channel {
+  uint64_t lock; // Protects access to waiting_thread, client.
   uint32_t waiting_thread;
-  uint32_t message;
-  enum { idle, waiting_to_send, waiting_to_send_expecting_response, waiting_for_response, response_received } state;
-} channel[16] = { { 0 } };
+  uint32_t received_message;
+  GPU_MAILBOX_CLIENT client;
+};
 
-static int last_sender = 0;
-static int next_channel( int c )
-{
-  return (c + 1) % 16;
-}
+struct mailbox_channel channels[16] = {};
 
-uint32_t debug_mailbox_message = -1;
-uint32_t debug_mailbox_state = -1;
+static uint32_t blocking_message = 0;
+uint64_t mailbox_sending_lock = 0;
+static uint32_t blocked_sending_thread = 0; // Thread holding mailbox_sending_lock, waiting to insert a message
 
 void mailbox_interrupt()
 {
@@ -33,202 +52,207 @@ void mailbox_interrupt()
   uint32_t mailbox1_pending = devices.mailbox[1].config;
 
   if ((mailbox0_pending & 0x10) != 0) { // Not empty
-    while (0 == (devices.mailbox[0].status & 0x40000000)) {
-      uint32_t message = devices.mailbox[0].value;
-      if (channel[message & 0xf].state == waiting_for_response) {
-        channel[message & 0xf].message = message;
-        channel[message & 0xf].state = response_received;
-        wake_thread( channel[message & 0xf].waiting_thread );
+    if (blocking_message != 0) {
+      int channel = blocking_message & 0xf;
+      if (channels[channel].received_message == 0) {
+        blocking_message = 0;
+        channels[channel].received_message = devices.mailbox[0].value & ~0xf;
+        wake_thread( channels[channel].waiting_thread );
       }
       else {
-        asm ( "brk 8" );
+        asm ( "brk 4" ); // How?
       }
     }
-    // Query: does emptying the fifo remove the interrupt?
+    while (0 == (devices.mailbox[0].status & 0x40000000)) {
+      uint32_t message = devices.mailbox[0].value; // Could peek, but using blocking_message is probably faster, and allows the GPU to insert one more message into the mailbox
+      int channel = message & 0xf;
+      if (channels[channel].waiting_thread == 0) {
+        // Message on unclaimed channel, discard
+        asm ( "brk 8" );
+        continue;
+      }
+      if (channels[channel].received_message == 0) {
+        channels[channel].received_message = message & ~0xf;
+        wake_thread( channels[channel].waiting_thread );
+      }
+      else {
+        // Channel client hasn't dealt with previous message yet. Blocked.
+        // TODO Keep an eye on how often this happens; maybe implement a fifo for each channel in software.
+        blocking_message = message;
+        asm ( "brk 1" );
+        break;
+      }
+    }
+    // Emptying the fifo removes the interrupt, if not every message can be delivered yet, pause the interrupts
+    if (0 != blocking_message) {
+      memory_write_barrier(); // About to write to devices.mailbox
+      devices.mailbox[0].config = 0; // No interrupts
+    }
   }
   memory_read_barrier(); // Completed our reads of devices.mailbox
 
   if ((mailbox1_pending & 0x20) != 0) { // Not full
-    memory_write_barrier(); // About to write to devices.mailbox
-    // Send as many unsent messages as possible, rotating through the channels, and
-    // waking the waiting threads. If no channels have anything to send afterwards,
-    // disable the interrupt.
-    assert( 0 == (devices.mailbox[1].status & 0x80000000) );
-    int c = last_sender;
-    int new_last_sender = last_sender;
-    do {
-      c = next_channel( c );
-      if (channel[c].state == waiting_to_send
-       || channel[c].state == waiting_to_send_expecting_response) {
-        devices.mailbox[1].value = channel[c].message;
-        if (channel[c].state == waiting_to_send_expecting_response) {
-          channel[c].state = waiting_for_response;
-        }
-        else {
-          wake_thread( channel[c].waiting_thread );
-        }
-        new_last_sender = c;
-      }
-    } while (0 == (devices.mailbox[1].status & 0x80000000) && c != last_sender);
-
     if (0 == (devices.mailbox[1].status & 0x80000000)) {
-      // Mailbox still isn't full, no need to wait
-      devices.mailbox[1].config = 0; // No interrups
+      memory_write_barrier(); // About to write to devices.mailbox
+      // Mailbox not full, no need to listen for the interrupt
+      devices.mailbox[1].config = 0; // No interrupts
+      wake_thread( blocked_sending_thread );
     }
-    last_sender = new_last_sender;
   }
 }
 
 #include "interfaces/provider/GPU_MAILBOX.h"
+#include "interfaces/client/GPU_MAILBOX.h"
 
-typedef NUMBER MBOX;
-typedef NUMBER Channel;
+typedef NUMBER MANAGER;
+
+integer_register mailbox_stack_lock = 0;
+ISAMBARD_STACK( mailbox_stack, 64 );
+
+ISAMBARD_GPU_MAILBOX_MANAGER__SERVER( MANAGER )
+ISAMBARD_PROVIDER( MANAGER, AS_GPU_MAILBOX_MANAGER( MANAGER ) )
+ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( MANAGER, RETURN_FUNCTIONS_GPU_MAILBOX_MANAGER( MANAGER ), mailbox_stack_lock, mailbox_stack, 64 * 8 )
 
 ISAMBARD_GPU_MAILBOX__SERVER( MBOX )
 ISAMBARD_PROVIDER( MBOX, AS_GPU_MAILBOX( MBOX ) )
 
-ISAMBARD_GPU_MAILBOX_CHANNEL__SERVER( Channel )
-ISAMBARD_PROVIDER( Channel, AS_GPU_MAILBOX_CHANNEL( Channel ) )
-
-integer_register mailbox_stack_lock = 0;
-integer_register __attribute__(( aligned(16) )) mailbox_stack[64];
-
 // Using the driver initialisation stack
 ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( MBOX, RETURN_FUNCTIONS_GPU_MAILBOX( MBOX ), mailbox_stack_lock, mailbox_stack, 64 * 8 )
-ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( Channel, RETURN_FUNCTIONS_GPU_MAILBOX_CHANNEL( Channel ), mailbox_stack_lock, mailbox_stack, 64 * 8 )
 
 void expose_gpu_mailbox()
 {
-  MBOX_GPU_MAILBOX_register_service( "Pi GPU Mailboxes", 0 );
+  mbox_pool_initialise();
+  MANAGER__GPU_MAILBOX_MANAGER__register_service( "Pi GPU Mailboxes", 0 );
 }
 
-void MBOX__GPU_MAILBOX__claim_channel( MBOX o, NUMBER channel )
+void MANAGER__GPU_MAILBOX_MANAGER__claim_channel( MANAGER o, NUMBER channel )
 {
   o = o;
+  if (channel.r > 15) MANAGER__exception( name_code( "Channel number out of range" ).r );
+  MANAGER__GPU_MAILBOX_MANAGER__claim_channel__return( MBOX__GPU_MAILBOX__to_return( (void*) &channels[channel.r] ) );
+}
 
-  if (channel.r >= 15) asm ( "brk 7" );
+void message_pump()
+{
+  int last_channel = 0;
+  for (;;) {
+    int messages = wait_until_woken() + 1;
+    for (int j = 0; j < messages; j++) {
+      for (int i = 0; i < 17; i++) {
+        int c = (last_channel+i) % 16;
+        if (channels[c].waiting_thread == this_thread
+         && channels[c].received_message != 0) {
+          NUMBER message = { .r = channels[c].received_message };
+          channels[c].received_message = 0;
+          GPU_MAILBOX_CLIENT__incoming_message( channels[c].client, message );
+          last_channel = c;
+          break;
+        }
+      }
+    }
+  }
+}
+
+void MBOX__GPU_MAILBOX__register_client( MBOX channel, GPU_MAILBOX_CLIENT client )
+{
+  claim_lock( &channel->lock );
+
+  if (channel->client.r != 0) {
+    release_lock( &channel->lock );
+    MBOX__exception( name_code( "Channel already has a client" ).r );
+  }
+
+  if (channel->waiting_thread != 0) {
+    release_lock( &channel->lock );
+    MBOX__exception( name_code( "Channel is already waiting for a response" ).r );
+  }
+
+  channel->client = client;
+
+  static uint32_t pump_thread = 0;
+  if (pump_thread == 0) {
+    static struct {
+      uint64_t s[32];
+    } pump_thread_stack;
+    pump_thread = create_thread( message_pump, (void*) ((&pump_thread_stack)+1) );
+  }
+
+  channel->waiting_thread = pump_thread;
+
+  release_lock( &channel->lock );
+
+  MBOX__GPU_MAILBOX__register_client__return();
+}
+
+void queue_message( int channel, uint32_t message )
+{
+  uint32_t status = devices.mailbox[1].status;
+  memory_read_barrier(); // Finished reading from devices.mailbox
 
   memory_write_barrier(); // About to write to devices.mailbox
-  devices.mailbox[0].config = 1; // Not-empty interrupt
-
-  MBOX__GPU_MAILBOX__claim_channel__return( Channel_GPU_MAILBOX_CHANNEL_to_return( (void *) channel.r ) );
-}
-
-// Only two entities adjust the config member of the mailboxes,
-// this function, and the interrupt handler routine.
-// The only interesting interrupt on the sending mailbox is not-full,
-// I don't care when it becomes not-empty (because that was me), or
-// empty.
-
-static uint64_t send_lock = 0;
-
-static void send_message( uint32_t message, int dest, bool response_expected )
-{
-  bool wait_to_continue = response_expected;
-
-  claim_lock( &send_lock );
-
-  if (0 == (devices.mailbox[1].status & 0x80000000)) {
-    channel[dest].state = response_expected ? waiting_for_response : idle;
-    channel[dest].waiting_thread = this_thread;
-    memory_write_barrier(); // About to write to devices.mailbox
-    devices.mailbox[1].value = message | dest;
+  devices.mailbox[0].config = 1; // Not-empty receive interrupts will be handled.
+  if (0 == (status & 0x80000000)) {
+    devices.mailbox[1].value = message | channel;
   }
   else {
-    channel[dest].state = response_expected ? waiting_to_send_expecting_response : waiting_to_send;
-    channel[dest].message = message | dest;
-    channel[dest].waiting_thread = this_thread;
-    memory_write_barrier(); // About to write to devices.mailbox
-    devices.mailbox[1].config = 2; // Not-full interrupt
+    blocked_sending_thread = this_thread;
+    devices.mailbox[1].config = 2; // Ensure not-full interrupts are raised
+    wait_until_woken();
 
-    // If the send is delayed, wait until it's put in the queue by the interrupt handler, or the
-    // response is received. Either way, this thread has to pause.
-    wait_to_continue = true;
-  }
+    status = devices.mailbox[1].status;
+    memory_read_barrier(); // Finished reading from devices.mailbox
 
-  release_lock( &send_lock );
-
-  if (wait_to_continue) {
-    wait_until_woken(); // I might have to wait to send, I *will* be waiting for the response.
-  }
-
-  asm ( "svc 0" );
-}
-
-void Channel__GPU_MAILBOX_CHANNEL__send_for_response( Channel c, NUMBER message )
-{
-  if (c.r > 15) asm ( "brk 8" );
-  if (channel[c.r].state != idle) asm ( "brk 8" );
-  if ((message.r & 0xf) != 0) asm ( "brk 9" );
-
-  send_message( message.r, c.r, true );
-
-  if (channel[c.r].state != response_received) asm ( "brk 4" );
-  if ((channel[c.r].message & 0xf) != c.r) asm ( "brk 5" );
-
-  channel[c.r].state = idle;
-
-  Channel__GPU_MAILBOX_CHANNEL__send_for_response__return( NUMBER_from_integer_register( channel[c.r].message & ~0xf ) );
-}
-
-#define MAX_REQUEST_SIZE 256 + 6
-
-static uint32_t __attribute__(( aligned( 16 ) )) mailbox_request[MAX_REQUEST_SIZE] = { 0x20202020, 0x30303030, 0x40404040 };
-uint32_t *const mailbox_request_buffer = &mailbox_request[5];
-
-// Routines 
-
-void flush_and_invalidate_cache( void *start, int length )
-{
-  dsb();
-
-  static uint64_t cache_line_size = 3; // Probably higher, but non-zero ensures loop completes
-  if (cache_line_size == 3) {
-    asm volatile ( "mrs %[s], DCZID_EL0" : [s] "=r" (cache_line_size) );
-  }
-
-  integer_register p = (integer_register) start;
-  length += (p & ((1 << cache_line_size)-1));
-  p = p & ~((1 << cache_line_size)-1);
-  while (length > 0) {
-    asm volatile ( "dc civac, %[va]" : : [va] "r" (p) );
-    p += (1 << cache_line_size);
-    length -= (1 << cache_line_size);
-  }
-}
-
-uint32_t tag_request()
-{
-  static uint32_t phys_addr = 0;
-  if (phys_addr == 0) {
-    // Welcome back to the days of himem and lomem in a PC...
-    uint64_t address = DRIVER_SYSTEM__physical_address_of( driver_system(), NUMBER_from_pointer( &mailbox_request ) ).r;
-    if (address >> 32) {
-      asm ( "brk 2" );
+    if (0 == (status & 0x80000000)) {
+      memory_write_barrier(); // About to write to devices.mailbox
+      devices.mailbox[1].value = message | channel;
     }
-    phys_addr = (uint32_t) address;
+    else {
+      MBOX__exception( name_code( "Woken while fifo still full" ).r );
+    }
   }
-  return phys_addr;
+
+  blocked_sending_thread = 0;
 }
 
-// Read/Write a single tag; buffer_size should be greater of request and response sizes
-uint32_t single_mailbox_tag_access( uint32_t tag, uint32_t buffer_size )
+void MBOX__GPU_MAILBOX__send_message( MBOX channel, NUMBER message )
 {
-  if (buffer_size > MAX_REQUEST_SIZE - 6) {
-     for (;;) { asm volatile ( "svc 1\n\tsvc 6" ); }
+  claim_lock( &channel->lock );
+
+  if (channel->client.r != 0) {
+    release_lock( &channel->lock );
+    MBOX__exception( name_code( "Channel has a client" ).r );
   }
 
-  mailbox_request[0] = buffer_size + 6 * sizeof( mailbox_request[0] );
-  mailbox_request[1] = 0;
-  mailbox_request[2] = tag;
-  mailbox_request[3] = buffer_size;
-  mailbox_request[4] = 0; // request
-  mailbox_request[5 + (buffer_size / sizeof( mailbox_request[0] ))] = 0; // end tag
+  channel->waiting_thread = this_thread;
 
-  flush_and_invalidate_cache( mailbox_request, mailbox_request[0] );
+  claim_lock( &mailbox_sending_lock );
 
-  send_message( tag_request(), 8, true );
+  queue_message( channel - channels, message.r );
 
-  return mailbox_request[4];
+  release_lock( &mailbox_sending_lock );
+
+  wait_until_woken();
+  channel->waiting_thread = 0;
+
+  uint32_t response = channel->received_message;
+  channel->received_message = 0;
+
+  release_lock( &channel->lock );
+
+  if (response != message.r) MBOX__exception( name_code( "Response doesn't match request" ).r );
+
+  MBOX__GPU_MAILBOX__send_message__return();
 }
 
+void MBOX__GPU_MAILBOX__queue_message( MBOX channel, NUMBER message )
+{
+  if (channel->client.r == 0) MBOX__exception( name_code( "Channel has no client" ).r );
+
+  claim_lock( &mailbox_sending_lock );
+
+  queue_message( channel - channels, message.r );
+
+  release_lock( &mailbox_sending_lock );
+
+  MBOX__GPU_MAILBOX__send_message__return();
+}

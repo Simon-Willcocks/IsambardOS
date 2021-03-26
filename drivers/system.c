@@ -303,7 +303,7 @@ void MapValue__DRIVER_SYSTEM__map_at( MapValue o, PHYSICAL_MEMORY_BLOCK block, N
 void MapValue__SYSTEM__create_thread( MapValue o, NUMBER code, NUMBER stack_top )
 {
   o = o;
-  MapValue__SYSTEM__create_thread__return( NUMBER_from_integer_register( make_special_request( Isambard_System_Service_Create_Thread, code.r, stack_top.r, 0 ) ) );
+  MapValue__SYSTEM__create_thread__return( NUMBER__from_integer_register( make_special_request( Isambard_System_Service_Create_Thread, code.r, stack_top.r, 0 ) ) );
 }
 
 void MapValue__DRIVER_SYSTEM__physical_address_of( MapValue o, NUMBER va )
@@ -331,11 +331,11 @@ void MapValue__SYSTEM__get_service( MapValue o, NUMBER name_crc, NUMBER type_crc
   struct service *s = services;
   while (s < &services[free_service]) {
     if (s->name_crc.r == name_crc.r && (type_crc.r == 0 || type_crc.r == s->type_crc.r)) {
-      MapValue__SYSTEM__get_service__return( NUMBER_from_integer_register( duplicate_to_return( s->service.r ) ) );
+      MapValue__SYSTEM__get_service__return( NUMBER__from_integer_register( duplicate_to_return( s->service.r ) ) );
     }
     s++;
   }
-  MapValue__SYSTEM__get_service__return( NUMBER_from_integer_register( 0 ) );
+  MapValue__SYSTEM__get_service__return( NUMBER__from_integer_register( 0 ) );
 }
 
 void MapValue__SYSTEM__allocate_memory( MapValue o, NUMBER size )
@@ -360,20 +360,20 @@ void MapValue__SYSTEM__allocate_memory( MapValue o, NUMBER size )
 void MapValue__DRIVER_SYSTEM__get_core_interrupts_count( MapValue o )
 {
   o = o;
-  MapValue__DRIVER_SYSTEM__get_core_interrupts_count__return( NUMBER_from_integer_register( this_core.interrupts_count ) );
+  MapValue__DRIVER_SYSTEM__get_core_interrupts_count__return( NUMBER__from_integer_register( this_core.interrupts_count ) );
 }
 
 void MapValue__DRIVER_SYSTEM__get_ms_timer_ticks( MapValue o )
 {
   o = o;
-  MapValue__DRIVER_SYSTEM__get_ms_timer_ticks__return( NUMBER_from_integer_register( ms_ticks ) );
+  MapValue__DRIVER_SYSTEM__get_ms_timer_ticks__return( NUMBER__from_integer_register( ms_ticks ) );
 }
 
 void MapValue__DRIVER_SYSTEM__get_core_timer_value( MapValue o )
 {
   o = o;
-  MapValue__DRIVER_SYSTEM__get_core_timer_value__return( NUMBER_from_integer_register( all_interrupts ) );
-  MapValue__DRIVER_SYSTEM__get_core_timer_value__return( NUMBER_from_integer_register( core_timer_value() ) );
+  MapValue__DRIVER_SYSTEM__get_core_timer_value__return( NUMBER__from_integer_register( all_interrupts ) );
+  MapValue__DRIVER_SYSTEM__get_core_timer_value__return( NUMBER__from_integer_register( core_timer_value() ) );
 }
 
 void MapValue__DRIVER_SYSTEM__register_interrupt_handler( MapValue o, INTERRUPT_HANDLER handler, NUMBER interrupt )
