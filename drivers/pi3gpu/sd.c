@@ -455,7 +455,7 @@ void show_page_thread()
   TRIVIAL_NUMERIC_DISPLAY__set_page_to_show( tnd, test_memory, NUMBER__from_pointer( mapped_memory ) );
   for (;;) {
     mapped_memory[1] ++;
-    yield();
+    sleep_ms( 20 );
     TRIVIAL_NUMERIC_DISPLAY__show_page( tnd );
     TRIVIAL_NUMERIC_DISPLAY__show_8bits( tnd, N( 10 ), N( 10 ), N( debug_progress ), N( 0xfff0f0f0 ) );
     TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 32 ), N( 10 ), N( debug_last_command ), N( 0xfff0f0f0 ) );
@@ -483,6 +483,48 @@ void __attribute__(( noreturn )) hammer_tag_interface()
   }
 }
 
+uint64_t ping = 0;
+uint64_t pong = 0;
+uint64_t pingpong = 0;
+uint64_t pingpong_lock = 0;
+
+#include "exclusive.h"
+
+uint32_t volatile pit = 0;
+uint32_t volatile pot = 0;
+
+void __attribute__(( noreturn )) ping_thread()
+{
+  pit = this_thread;
+  while (pot == 0) { yield(); }
+  int volatile local = 0;
+  for (;;) {
+    local++;
+    wake_thread( pot );
+    wait_until_woken();
+    claim_lock( &pingpong_lock );
+    ping++;
+    pingpong--;
+    release_lock( &pingpong_lock );
+  }
+}
+
+void __attribute__(( noreturn )) pong_thread()
+{
+  pot = this_thread;
+  while (pit == 0) { yield(); }
+  int volatile local = 0;
+  for (;;) {
+    local++;
+    wake_thread( pit );
+    wait_until_woken();
+    claim_lock( &pingpong_lock );
+    pong++;
+    pingpong++;
+    release_lock( &pingpong_lock );
+  }
+}
+
 void start_show_page_thread()
 {
   test_memory = SYSTEM__allocate_memory( system, NUMBER__from_integer_register( 4096 ) );
@@ -499,7 +541,10 @@ void start_show_page_thread()
 
   sleep_ms( 5000 );
 
-  for (int i = 1; i < 2; i++) {
+  create_thread( ping_thread, (uint64_t*) (0x11000 - (1 * 0x200)) );
+  create_thread( pong_thread, (uint64_t*) (0x11000 - (2 * 0x200)) );
+
+  for (int i = 1; i < 0; i++) {
     create_thread( hammer_tag_interface, (uint64_t*) (0x11000 - (i * 0x200)) );
   }
 #endif
@@ -513,6 +558,7 @@ void expose_emmc()
 
   wait_until_woken(); // While debugging, this means that the frame buffer had been initialised, so we're the only driver using the mailbox
 
+for (;;) { sleep_ms( 10000 ); }
   debug_progress = 1;
 
   EMMC__BLOCK_DEVICE__register_service( "EMMC", &emmc_service_singleton );
