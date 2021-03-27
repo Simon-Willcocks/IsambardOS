@@ -445,9 +445,6 @@ uint32_t initialisation_thread = -1;
 
 void show_page_thread()
 {
-  test_memory = SYSTEM__allocate_memory( system, NUMBER__from_integer_register( 4096 ) );
-  DRIVER_SYSTEM__map_at( driver_system(), test_memory, NUMBER__from_pointer( mapped_memory ) );
-
   mapped_memory[0] = 0;
   mapped_memory[1] = 0;
 
@@ -466,16 +463,46 @@ void show_page_thread()
     TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 232 ), N( 10 ), N( debug_last_interrupts ), N( 0xfff0f0f0 ) );
     TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 332 ), N( 10 ), N( debug_all_interrupts ), N( 0xffffffff ) );
     TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 432 ), N( 10 ), N( debug_interrupted ), N( 0xfff0f0f0 ) );
+    base_clock_rate( CLK_EMMC );
+  }
+}
+
+void __attribute__(( noreturn )) hammer_tag_interface()
+{
+  int volatile local = 0;
+  int volatile code = 2 + (0x7 & ((uint64_t) (&local) >> 8));
+  int volatile rate = 0;
+  for (int i = 0; i < 20; i++) {
+    mapped_memory[8] = i;
+    sleep_ms( 1000 );
+  }
+  for (;;) {
+    local++;
+    sleep_ms( 100 );
+    rate = base_clock_rate( CLK_EMMC );
   }
 }
 
 void start_show_page_thread()
 {
+  test_memory = SYSTEM__allocate_memory( system, NUMBER__from_integer_register( 4096 ) );
+  DRIVER_SYSTEM__map_at( driver_system(), test_memory, NUMBER__from_pointer( mapped_memory ) );
+
+#if 0
   static struct {
     uint64_t stack[64];
   } __attribute__(( aligned(16) )) stack = {};
 
   create_thread( show_page_thread, (uint64_t*) ((&stack)+1) );
+#else
+  create_thread( show_page_thread, (uint64_t*) (0x11000) );
+
+  sleep_ms( 5000 );
+
+  for (int i = 1; i < 2; i++) {
+    create_thread( hammer_tag_interface, (uint64_t*) (0x11000 - (i * 0x200)) );
+  }
+#endif
 }
 
 void expose_emmc()

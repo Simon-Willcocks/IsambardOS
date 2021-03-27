@@ -7,6 +7,7 @@ fi
 
 PATH=$PATH:$HOME/cross-compiler64/bin/
 
+find . -newer kernel8.dump
 ./build.sh &&
 echo Waiting for SD card &&
 while test \! -f $1/kernel8.img

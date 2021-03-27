@@ -9,57 +9,6 @@
 
 #include "devices.h"
 
-
-// Suitable for when caches enabled (128x faster?)
-#define LED_BLINK_TIME 0x8000000
-
-static inline void led_off( )
-{
-  memory_write_barrier(); // About to write to devices.gpio
-  devices.gpio.GPCLR[0] = (1 << 4);
-}
-
-static inline void led_on( )
-{
-  memory_write_barrier(); // About to write to devices.gpio
-  devices.gpio.GPSET[0] = (1 << 4);
-}
-
-void led_blink( int n ) {
-  // Count the blinks! Extra short = 0, Long = 5
-
-  if (n == 0) {
-    led_on();
-    for (uint64_t i = 0; i < LED_BLINK_TIME / 4; i++) { asm volatile ( "" ); }
-    led_off();
-    for (uint64_t i = 0; i < LED_BLINK_TIME; i++) { asm volatile ( "" ); }
-  }
-  else {
-    while (n >= 5) {
-      led_on();
-      for (uint64_t i = 0; i < LED_BLINK_TIME * 4; i++) { asm volatile ( "" ); }
-      led_off();
-      for (uint64_t i = 0; i < LED_BLINK_TIME; i++) { asm volatile ( "" ); }
-      n -= 5;
-    }
-    while (n > 0) {
-      led_on();
-      for (uint64_t i = 0; i < LED_BLINK_TIME; i++) { asm volatile ( "" ); }
-      led_off();
-      for (uint64_t i = 0; i < LED_BLINK_TIME; i++) { asm volatile ( "" ); }
-      n --;
-    }
-  }
-  for (uint64_t i = 0; i < 4 * LED_BLINK_TIME; i++) { asm volatile ( "" ); }
-}
-
-void blink_number( uint32_t number )
-{
-  for (int i = 28; i >= 0; i -= 4) {
-    led_blink( (number >> i) & 0xf );
-  }
-}
-
 static uint64_t physical_address;
 static uint32_t *const mapped_address = (void*) (2 << 20);
 static uint32_t memory_size;
@@ -67,219 +16,6 @@ static const uint32_t width = 1920;
 static const uint32_t height = 1080;
 static const uint32_t vwidth = 1920;
 static const uint32_t vheight = 1080;
-
-enum fb_colours {
-  Black   = 0xff000000,
-  Grey    = 0xff888888,
-  Blue    = 0xff0000ff,
-  Green   = 0xff00ff00,
-  Red     = 0xffff0000,
-  Yellow  = 0xffffff00,
-  Magenta = 0xffff00ff,
-  White   = 0xffffffff };
-
-static const unsigned char bitmaps[16][8] = {
-  {
-  0b00111100,
-  0b01100110,
-  0b01100110,
-  0b01100110,
-  0b01100110,
-  0b01100110,
-  0b00111100,
-  0b00000000
-  },{
-  0b00011100,
-  0b00111100,
-  0b00001100,
-  0b00001100,
-  0b00001100,
-  0b00001100,
-  0b00011110,
-  0b00000000
-  },{
-  0b00111100,
-  0b01100110,
-  0b00001100,
-  0b00011000,
-  0b00110000,
-  0b01111110,
-  0b01111110,
-  0b00000000
-  },{
-  0b00111100,
-  0b01100110,
-  0b00000110,
-  0b00011110,
-  0b00000110,
-  0b01100110,
-  0b00111100,
-  0b00000000
-  },{
-  0b00011000,
-  0b00110000,
-  0b01100000,
-  0b01101100,
-  0b01111110,
-  0b00001100,
-  0b00001100,
-  0b00000000
-  },{
-  0b01111110,
-  0b01100000,
-  0b01100000,
-  0b01111100,
-  0b00000110,
-  0b01100110,
-  0b00111100,
-  0b00000000
-  },{
-  0b00111100,
-  0b01100110,
-  0b01100000,
-  0b01111100,
-  0b01100110,
-  0b01100110,
-  0b00111100,
-  0b00000000
-  },{
-  0b01111110,
-  0b00000110,
-  0b00001100,
-  0b00011000,
-  0b00110000,
-  0b01100000,
-  0b01100000,
-  0b00000000
-  },{
-  0b00111100,
-  0b01100110,
-  0b01100110,
-  0b00111100,
-  0b01100110,
-  0b01100110,
-  0b00111100,
-  0b00000000
-  },{
-  0b00111100,
-  0b01100110,
-  0b01100110,
-  0b00111110,
-  0b00000110,
-  0b01100110,
-  0b00111000,
-  0b00000000
-  },{
-  0b00111100,
-  0b01100110,
-  0b01100110,
-  0b01100110,
-  0b01111110,
-  0b01100110,
-  0b01100110,
-  0b00000000
-  },{
-  0b01111000,
-  0b01100110,
-  0b01100110,
-  0b01111100,
-  0b01100110,
-  0b01100110,
-  0b01111000,
-  0b00000000
-  },{
-  0b00111100,
-  0b01100110,
-  0b01100000,
-  0b01100000,
-  0b01100000,
-  0b01100110,
-  0b00111100,
-  0b00000000
-  },{
-  0b01111000,
-  0b01101100,
-  0b01100110,
-  0b01100110,
-  0b01100110,
-  0b01101100,
-  0b01111000,
-  0b00000000
-  },{
-  0b01111110,
-  0b01100000,
-  0b01100000,
-  0b01111000,
-  0b01100000,
-  0b01100000,
-  0b01111110,
-  0b00000000
-  },{
-  0b01111110,
-  0b01100000,
-  0b01100000,
-  0b01111000,
-  0b01100000,
-  0b01100000,
-  0b01100000,
-  0b00000000
-  }
-};
-
-static inline void set_pixel( uint32_t x, uint32_t y, uint32_t colour )
-{
-  mapped_address[x + y * vwidth] = colour;
-}
-
-static inline void show_nibble( uint32_t x, uint32_t y, uint32_t nibble, uint32_t colour )
-{
-  uint32_t dx = 0;
-  uint32_t dy = 0;
-
-  for (dy = 0; dy < 8; dy++) {
-    for (dx = 0; dx < 8; dx++) {
-      if (0 != (bitmaps[nibble][dy] & (0x80 >> dx)))
-        set_pixel( x+dx, y+dy, colour );
-      else
-        set_pixel( x+dx, y+dy, Black );
-    }
-  }
-}
-
-// static void show_word( int x, int y, uint32_t number, uint32_t colour )
-void show_word( int x, int y, uint32_t number, uint32_t colour )
-{
-  for (int shift = 28; shift >= 0; shift -= 4) {
-    show_nibble( x, y, (number >> shift) & 0xf, colour );
-    x += 8;
-  }
-}
-
-static void show_qword( int x, int y, uint64_t number, uint32_t colour )
-{
-  show_word( x, y, (uint32_t) (number >> 32), colour );
-  show_word( x+66, y, (uint32_t) (number & 0xffffffff), colour );
-}
-
-/*
-static void show_pointer( int x, int y, void *ptr, uint32_t colour )
-{
-  show_qword( x, y, ((char*)ptr - (char*)0), colour );
-}
-*/
-
-static void show_page( uint32_t *number )
-{
-  // 4 * 16 * 16 * 4 = 4096 bytes
-  for (int y = 0; y < 4*16; y++) {
-    show_word( 0, y * 8 + 64, ((char *)(&number[y*16]) - (char *)0), White );
-    for (int x = 0; x < 16; x++) {
-      uint32_t colour = White;
-      if (0 == (y & 7) || 0 == (x & 7)) colour = Green;
-      show_word( x * 68 + 72, y * 8 + 64, number[x + y * 16], colour );
-    }
-  }
-}
 
 PHYSICAL_MEMORY_BLOCK screen_page = { .r = 0 };
 bool screen_mapped = false;
@@ -323,9 +59,6 @@ void initialise_display()
   uint32_t fake_size = (memory_size + (2 << 20)-1) & ~((2ull << 20)-1);
   // Size made to multiple of 2M. Not true, but quick to implement! FIXME when find_and_map_memory is more refined
   screen_page = DRIVER_SYSTEM__get_physical_memory_block( driver_system(), NUMBER__from_integer_register( physical_address ), NUMBER__from_integer_register( fake_size ) );
-
-  map_screen();
-  show_word( 100, 100, 0, White );
 }
 
 void map_screen()
@@ -364,7 +97,8 @@ void expose_frame_buffer()
 void FB__FRAME_BUFFER__get_frame_buffer( FB o )
 {
   o = o;
-  map_screen();
-  show_word( 100, 100, 0, White );
+
+  while (screen_page.r == 0) { initialise_display(); }
+
   FB__FRAME_BUFFER__get_frame_buffer__return( PHYSICAL_MEMORY_BLOCK__duplicate_to_return( screen_page ) );
 }

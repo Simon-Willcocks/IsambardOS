@@ -1226,8 +1226,8 @@ asm ( "mov x26, %[r]" : : [r] "r" (thread->regs[30]) );
       break;
     default:
       {
-        switch ((esr >> 29) & 0x7) { // Top bits
-        // switch ((esr >> 26) & 0x7) { // Lower 3 bits
+        // switch ((esr >> 29) & 0x7) { // Top bits
+        switch ((esr >> 26) & 0x7) { // Lower 3 bits
         case 0: BSOD( 5 ); break;
         case 1: BSOD( 6 ); break;
         case 2: BSOD( 7 ); break;

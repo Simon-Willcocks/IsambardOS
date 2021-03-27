@@ -205,8 +205,14 @@ interrupts_handled[0]+= 0x100000;
     this_core.last_cval += ticks_per_millisecond;
 #endif
     asm ( "msr CNTP_CVAL_EL0, %[d]" : : [d] "r" (this_core.last_cval) );
+#ifdef QEMU
+for (int i = 0; i < 10; i++) {
+#endif
     ms_ticks ++;
     gate_function( 0, 0 ); // Special case for interrupt handler thread, releases all threads that timeout this tick
+#ifdef QEMU
+}
+#endif
   }
 
   for (int i = 0; sources != 0 && i < 12; i++) {

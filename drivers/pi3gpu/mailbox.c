@@ -63,7 +63,7 @@ void mailbox_interrupt()
         asm ( "brk 4" ); // How?
       }
     }
-    while (0 == (devices.mailbox[0].status & 0x40000000)) {
+    while (0 == (devices.mailbox[0].status & 0x40000000)) { // Not empty
       uint32_t message = devices.mailbox[0].value; // Could peek, but using blocking_message is probably faster, and allows the GPU to insert one more message into the mailbox
       int channel = message & 0xf;
       if (channels[channel].waiting_thread == 0) {
@@ -79,7 +79,9 @@ void mailbox_interrupt()
         // Channel client hasn't dealt with previous message yet. Blocked.
         // TODO Keep an eye on how often this happens; maybe implement a fifo for each channel in software.
         blocking_message = message;
-        asm ( "brk 1" );
+        // Note: running a stress test gets us here, does the code get us out?
+flush_and_invalidate_cache( channels, sizeof( channels ) );
+asm( "brk 4" );
         break;
       }
     }
