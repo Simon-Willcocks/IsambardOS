@@ -5,6 +5,8 @@ static inline thread_switch handle_svc_gate( Core *core, thread_context *thread 
 {
   thread_switch result = { .then = thread, .now = thread }; // By default, stay with the same thread
 
+  static const int32_t THREAD_WAITING = -1;
+
   // Thread parameter x0: 0 = this thread should wait, <>0 thread to wake
   // Timeout parameter x1: 0 => wait forever, > 0 => wait this many ticks
   //
@@ -58,7 +60,7 @@ static inline thread_switch handle_svc_gate( Core *core, thread_context *thread 
       result.now = thread->next;
       core->runnable = thread->next;
       remove_thread( thread );
-      thread->gate = thread_code( thread ); // Marks as blocked
+      thread->gate = THREAD_WAITING;
       thread->regs[0] = 0; // B (when it finally returns)
 
       if (thread->regs[1] > 0) {
@@ -92,7 +94,7 @@ static inline thread_switch handle_svc_gate( Core *core, thread_context *thread 
 
     thread_context *release_thread = thread_from_code( thread->regs[0] );
 
-    if (release_thread->gate == (int32_t) thread->regs[0]) {
+    if (release_thread->gate == THREAD_WAITING) {
       if (thread->current_map == release_thread->current_map) { // More checks?
         // Indicates the thread is blocked 
         insert_new_thread_after_old( release_thread, thread );
@@ -114,7 +116,7 @@ static inline thread_switch handle_svc_gate( Core *core, thread_context *thread 
         BSOD( __COUNTER__ ); // Threads not blocked in same map
       }
     }
-    else {
+    else if (release_thread->gate < 0x7fffffff) { // No more than that, which is certainly an error, or an attack
       release_thread->gate++;
     }
   }
