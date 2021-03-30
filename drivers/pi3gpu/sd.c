@@ -437,8 +437,8 @@ ISAMBARD_BLOCK_DEVICE__SERVER( EMMC )
 ISAMBARD_PROVIDER( EMMC, AS_BLOCK_DEVICE( EMMC ) )
 ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( EMMC, RETURN_FUNCTIONS_BLOCK_DEVICE( EMMC ), emmc_lock, emmc_stack, 64 * 8 )
 
-PHYSICAL_MEMORY_BLOCK test_memory;
-uint32_t *mapped_memory = (void*) (0x10000);
+extern PHYSICAL_MEMORY_BLOCK test_memory;
+extern uint32_t *mapped_memory;
 
 TRIVIAL_NUMERIC_DISPLAY tnd = {};
 uint32_t initialisation_thread = -1;
@@ -450,7 +450,10 @@ void show_page_thread()
 
   tnd = TRIVIAL_NUMERIC_DISPLAY__get_service( "Trivial Numeric Display", -1 );
 
+    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 800 ), N( 10 ), N( initialisation_thread ), N( 0xfff0f0f0 ) );
+  debug_progress = 0x22;
   wake_thread( initialisation_thread );
+  debug_progress = 0x44;
 
   TRIVIAL_NUMERIC_DISPLAY__set_page_to_show( tnd, test_memory, NUMBER__from_pointer( mapped_memory ) );
   for (;;) {
@@ -463,23 +466,20 @@ void show_page_thread()
     TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 232 ), N( 10 ), N( debug_last_interrupts ), N( 0xfff0f0f0 ) );
     TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 332 ), N( 10 ), N( debug_all_interrupts ), N( 0xffffffff ) );
     TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 432 ), N( 10 ), N( debug_interrupted ), N( 0xfff0f0f0 ) );
-    base_clock_rate( CLK_EMMC );
+    // base_clock_rate( CLK_EMMC );
   }
 }
 
 void __attribute__(( noreturn )) hammer_tag_interface()
 {
-  int volatile local = 0;
-  int volatile code = 2 + (0x7 & ((uint64_t) (&local) >> 8));
-  int volatile rate = 0;
-  for (int i = 0; i < 20; i++) {
-    mapped_memory[8] = i;
-    sleep_ms( 1000 );
-  }
+  long long int volatile local = 0x222211110000;
+  long long int volatile *bumps = &local;
+  long long int volatile code = 2 + (0x7 & ((uint64_t) (&local) >> 8));
+  long long int volatile rate = 0x12345678;
   for (;;) {
     local++;
-    sleep_ms( 100 );
-    rate = base_clock_rate( CLK_EMMC );
+    rate = base_clock_rate( code );
+    sleep_ms( 50 );
   }
 }
 
@@ -495,41 +495,70 @@ uint32_t volatile pot = 0;
 
 void __attribute__(( noreturn )) ping_thread()
 {
-  pit = this_thread;
-  while (pot == 0) { yield(); }
   int volatile local = 0;
+  yield();
+  pit = this_thread;
+  yield();
+  if (pot == 0) asm ( "brk 3" );
   for (;;) {
     local++;
-    wake_thread( pot );
     wait_until_woken();
-    claim_lock( &pingpong_lock );
     ping++;
     pingpong--;
-    release_lock( &pingpong_lock );
+    wake_thread( pot );
   }
 }
 
 void __attribute__(( noreturn )) pong_thread()
 {
-  pot = this_thread;
-  while (pit == 0) { yield(); }
   int volatile local = 0;
+  yield();
+  pot = this_thread;
+  yield();
+  if (pit == 0) asm ( "brk 3" );
+  // Kick it off!
+  wake_thread( pit );
   for (;;) {
     local++;
-    wake_thread( pit );
     wait_until_woken();
-    claim_lock( &pingpong_lock );
+    yield();
     pong++;
     pingpong++;
-    release_lock( &pingpong_lock );
+    wake_thread( pit );
+  }
+}
+
+uint32_t time = 0;
+
+void timer_event()
+{
+  if (time != 0) wake_thread( time );
+}
+
+void __attribute__(( noreturn )) timer_thread()
+{
+  int volatile local = 0;
+  int volatile total = 0;
+  time = this_thread;
+
+  memory_write_barrier(); // About to write to devices.timer
+  //devices.timer.load = 96; // .1ms.  2s: 1920000;
+  devices.timer.load = 1920; // 2ms
+  // devices.timer.load = 10; // ~100us.  Too much! Can't keep up.
+  //devices.timer.load = 48; // ~200us.
+  devices.timer.control |= 0x2a2; // Interrupts enabled, but see bit 0 of Enable_Basic_IRQs
+
+  memory_write_barrier(); // About to write to devices.interrupts
+  devices.interrupts.Enable_Basic_IRQs = 1; // Enable "ARM Timer" IRQ
+
+  for (;;) {
+    local++;
+    total += 1 + wait_until_woken();
   }
 }
 
 void start_show_page_thread()
 {
-  test_memory = SYSTEM__allocate_memory( system, NUMBER__from_integer_register( 4096 ) );
-  DRIVER_SYSTEM__map_at( driver_system(), test_memory, NUMBER__from_pointer( mapped_memory ) );
-
 #if 0
   static struct {
     uint64_t stack[64];
@@ -539,13 +568,13 @@ void start_show_page_thread()
 #else
   create_thread( show_page_thread, (uint64_t*) (0x11000) );
 
-  sleep_ms( 5000 );
+  create_thread( ping_thread, (uint64_t*) 0x10700 );
+  create_thread( pong_thread, (uint64_t*) 0x10800 );
 
-  create_thread( ping_thread, (uint64_t*) (0x11000 - (1 * 0x200)) );
-  create_thread( pong_thread, (uint64_t*) (0x11000 - (2 * 0x200)) );
+  create_thread( timer_thread, (uint64_t*) 0x10a00 );
 
-  for (int i = 1; i < 0; i++) {
-    create_thread( hammer_tag_interface, (uint64_t*) (0x11000 - (i * 0x200)) );
+  for (int i = 1; i < 5; i++) {
+    create_thread( hammer_tag_interface, (uint64_t*) (0x11000 - (i * 0x100)) );
   }
 #endif
 }
@@ -556,9 +585,13 @@ void expose_emmc()
 
   start_show_page_thread();
 
-  wait_until_woken(); // While debugging, this means that the frame buffer had been initialised, so we're the only driver using the mailbox
+  debug_progress = 0x88;
 
-for (;;) { sleep_ms( 10000 ); }
+  debug_progress = 0x11;
+  wait_until_woken(); // While debugging, this means that the frame buffer had been initialised, so we're the only driver using the mailbox
+  debug_progress = 0x33;
+
+    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 900 ), N( 10 ), N( this_thread ), N( 0xfff0f0f0 ) );
   debug_progress = 1;
 
   EMMC__BLOCK_DEVICE__register_service( "EMMC", &emmc_service_singleton );

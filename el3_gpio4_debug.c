@@ -401,12 +401,12 @@ void showme()
   led_blink( 0x3f200000, 3 );
   for (;;) {
     showregs();
-    uint64_t *page = (void*) 0xf000;
+    uint64_t *page = (void*) 0xfff000;
     // page = page[511] & ~0xfff;
     for (;;) {
 show_page( (void*) page );
     for (uint64_t i = 0; i < LED_BLINK_TIME * 400; i++) { asm volatile ( "" ); }
-    page = (void*) ((uint64_t) page ^ 0xff0000);
+//    page = (void*) ((uint64_t) page ^ 0xff0000);
 }
 
     for (int i = 0; i < 0x30000; i+= 0x1000)

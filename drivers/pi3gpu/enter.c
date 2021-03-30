@@ -59,8 +59,8 @@ void GPU__INTERRUPT_HANDLER__interrupt( GPU o )
         }
         memory_write_barrier(); // About to write to devices.timer
         devices.timer.wo_irq_clear = 1; // Any value should do it.
-
-        asm ( "svc 0" ); // FIXME Remove when everything working
+extern void timer_event();
+        timer_event();
       }
       break;
       case 1:
@@ -101,10 +101,6 @@ void entry()
   DRIVER_SYSTEM__register_interrupt_handler( driver_system(), obj, NUMBER__from_integer_register( 8 ) );
 
   expose_gpu_mailbox(); // Needed by FB, EMMC
-
-  memory_write_barrier(); // About to write to devices.timer
-  devices.timer.load = (1 << 23) - 1; // Max load value for 23 bit counter
-  devices.timer.control |= 0x2a2; // Interrupts enabled, but see bit 0 of Enable_Basic_IRQs
 
   memory_write_barrier(); // About to write to devices.interrupts
   // devices.interrupts.Enable_Basic_IRQs = 1; // Enable "ARM Timer" IRQ
