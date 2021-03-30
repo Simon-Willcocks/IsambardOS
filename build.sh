@@ -138,6 +138,6 @@ echo Checking that all variables are initialised in the kernel files &&
 ( grep -vl \\.bss kernel8.dump || ( echo Uninitialised variables expand the kernel image unnecessarily && false ) ) &&
 echo Checking that the drivers are properly padded to whole pages &&
 grep ' _binary_built_.*bin_' kernel8.dump | grep -e "[1-9a-f][0-9a-f][0-9a-f] g" -e "[0-9a-f][1-9a-f][0-9a-f] g" -e "[0-9a-f][0-9a-f][1-9a-f] g" && ( echo Build failure, drivers not aligned properly ; exit 1 )
-echo Checking that all variables with the word \"stack\" at the end of the name are 16-byte aligned &&
-grep '^000.*stack\>' {,built_drivers/}*.dump | grep '[1-9a-f] g' && ( echo Possible unaligned stacks? ; exit 1 ) || true
+echo Checking that all global or local variables with the word \"stack\" at the end of the name are 16-byte aligned &&
+grep -e '^000.*stack\>' -e '^000.*stack\.[0-9]*\>' {,built_drivers/}*.dump | grep '[1-9a-f] g' && ( echo Possible unaligned stacks? ; exit 1 ) || true
 
