@@ -78,40 +78,6 @@ extern Object interface_to_pass_to( Object user, void *handler, void * value );
         REG_PAIR (d14, d15, 160);
 #endif
 
-#if 0
-//This doesn't work : how do you set the stack pointer, for the return function?
-#define ISAMBARD_PROVIDER_UNLOCKED_PER_OBJECT_STACK( type ) \
-// Copyright (c) Simon Willcocks 2021
-
-#define ISAMBARD_GATE 0xf001
-#define ISAMBARD_DUPLICATE_TO_RETURN 0xf002
-#define ISAMBARD_DUPLICATE_TO_PASS 0xf003
-#define ISAMBARD_INTERFACE_TO_RETURN 0xf004
-#define ISAMBARD_INTERFACE_TO_PASS 0xf005
-
-#define ISAMBARD_LOCK_WAIT 0xf006
-#define ISAMBARD_LOCK_RELEASE 0xf007
-
-#define ISAMBARD_YIELD 0xf008
-
-#define ISAMBARD_CALL 0xf009
-#define ISAMBARD_RETURN 0xf00a
-#define ISAMBARD_EXCEPTION 0xf00b
-
-// Only usable by system driver:
-#define ISAMBARD_SYSTEM_REQUEST 0xf00c
-        asm ( "\t.section .text" \
-              "\n"#type"_veneer: mov sp, x0" \
-              STACK_CALLEE_SAVED_REGISTERS \
-              "\n\tbl "#type"__call_handler" \
-              "\n\tldr w0, badly_written_driver_exception" \
-              "\n\tsvc #"ENSTRING( ISAMBARD_EXCEPTION ) \
-              "\n"#type"__return:" \
-              RESTORE_CALLEE_SAVED_REGISTERS \
-              "\n\tsvc #"ENSTRING( ISAMBARD_RETURN ) \
-              "\n\t.previous" );
-#endif
-
 #define THREADPOOL( label, size, count ) \
     struct label##_threadpool { uint64_t frames[count][size]; } __attribute__(( aligned(16) )) label##_threadpool; \
     struct label##_threadpool *label##_threadpool_free = 0; \
@@ -248,7 +214,7 @@ struct ippolas_veneer_data {
   void *obj;
 };
 
-#define ISAMBARD_PROVIDER_PER_OBJECT_LOCK_AND_STACK( type, log2_total_size ) \
+#define ISAMBARD_PROVIDER_PER_OBJECT_LOCK_AND_STACK( type, return_functions, log2_total_size ) \
         struct type##_storage __attribute__(( aligned( 1 << log2_total_size ) )) { \
           uint64_t stack[((1 << log2_total_size) - sizeof( type ) - sizeof( ippolas_veneer_data ))/16]; \
           type object; \
