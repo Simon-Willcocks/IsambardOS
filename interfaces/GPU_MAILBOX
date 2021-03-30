@@ -3,17 +3,10 @@ interface GPU_MAILBOX_MANAGER
   claim_channel IN channel: NUMBER OUT mailbox: GPU_MAILBOX
 end
 
-# There are two ways to use a mailbox associated with a channel.
-# The first is to use send_message, which returns when the response is received, blocking the caller
-# This is good for a simple "conversation" with the GPU
-# The second is to register a client, and send messages using queue_message from multiple threads.
-# This is more complex, but allows for multiple simultaneous requests on the same channel (it's up to the
-# caller to sort them out).
+# Register a client, and send messages using queue_message from multiple threads.
+# This allows for multiple simultaneous requests on the same channel (it's up to the
+# caller to sort the responses out).
 interface GPU_MAILBOX
-  # Sends a message on the channel, returns when a response is received.
-  # Throws an exception if the response doesn't match the request.
-  send_message IN message: NUMBER
-
   # Sends a message, the response will be passed to the registered client
   # May block while waiting to send the message, but doesn't wait for a response.
   queue_message IN message: NUMBER

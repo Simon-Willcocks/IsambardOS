@@ -26,7 +26,7 @@ static inline NUMBER __attribute__ ((pure)) name_code( const char *name )
   return NUMBER__from_integer_register( ~crc );
 }
 
-static inline void sleep_ms( integer_register timeout );
+static inline bool sleep_ms( integer_register timeout ); // Returns true if woken before timeout
 ISAMBARD_INTERFACE( SYSTEM )
 extern SYSTEM system; // Initialised by _start code
 
@@ -89,7 +89,7 @@ static inline integer_register sleep_unless_woken( integer_register timeout )
   return gate_function( 0, timeout );
 }
 
-static inline void sleep_ms( integer_register timeout )
+static inline bool sleep_ms( integer_register timeout )
 {
-  if (timeout <= 0) yield(); else gate_function( 0, timeout );
+  if (timeout <= 0) { yield(); return false; } else { return -1ull != gate_function( 0, timeout ); }
 }

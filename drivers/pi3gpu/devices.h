@@ -156,7 +156,5 @@ extern void expose_emmc();
 
 extern void mailbox_tag_request( uint32_t *request );
 
-extern void sleep_ms( uint64_t ms );
-
 static void dsb() { asm volatile ( "dsb sy" ); }
 
