@@ -39,7 +39,7 @@ SYSTEM_DRIVER=system
 MEMORY_DRIVER=physical_memory_allocator
 SPECIAL_DRIVERS="$SYSTEM_DRIVER $MEMORY_DRIVER"
 
-DRIVERS="pi3gpu show_page"
+DRIVERS="pi3gpu show_page riscos"
 
 echo Building drivers: $DRIVERS
 

@@ -506,7 +506,7 @@ static inline thread_switch handle_svc( Core *core, thread_context *thread, int 
       }
     }
 
-    if (interface->user != thread->current_map) { BSOD( __COUNTER__ ); }
+    if (interface->user != thread->current_map) { asm ( "mov x25, %[u]\n\tmov x26, %[i]\n\tmov x27, %[v]" : : [u] "r" (interface->user), [i] "r" (thread->regs[0]), [v] "r" (thread->regs[1]) ); BSOD( __COUNTER__ ); }
 
     thread->regs[0] = interface->object.as_number;
 

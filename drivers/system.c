@@ -44,7 +44,6 @@ asm ( ".section .text"
 
 // List all the interfaces known to this file, and to those interfaces
 
-#include "interfaces/client/PHYSICAL_MEMORY_BLOCK.h"
 #include "interfaces/client/INTERRUPT_HANDLER.h"
 // ContiguousMemoryBlock implements this interface
 #include "interfaces/provider/PHYSICAL_MEMORY_BLOCK.h"
@@ -54,6 +53,9 @@ asm ( ".section .text"
 
 uint64_t __attribute__(( aligned( 16 ) )) map_stack[64];
 uint64_t map_lock = 0;
+
+static integer_register allocatable_memory_base = 0;
+static integer_register allocatable_memory_top = 0;
 
 ISAMBARD_PHYSICAL_MEMORY_BLOCK__SERVER( ContiguousMemoryBlock )
 ISAMBARD_PROVIDER( ContiguousMemoryBlock, AS_PHYSICAL_MEMORY_BLOCK( ContiguousMemoryBlock ) )
@@ -344,10 +346,23 @@ void MapValue__SYSTEM__get_service( MapValue o, NUMBER name_crc, NUMBER type_crc
   MapValue__SYSTEM__get_service__return( NUMBER__from_integer_register( 0 ) );
 }
 
+void MapValue__DRIVER_SYSTEM__set_memory_top( MapValue o, NUMBER top )
+{
+  o = o;
+
+  allocatable_memory_top = top.r;
+
+  Isambard_20( memory_manager, 0, allocatable_memory_base, top.r ); // Initialise
+}
+
 void MapValue__SYSTEM__allocate_memory( MapValue o, NUMBER size )
 {
   o = o;
   PHYSICAL_MEMORY_BLOCK result = { 0 };
+
+  if (allocatable_memory_top == 0) {
+    MapValue__exception( 0 ); // No memory to allocate. May retry after yield or sleep, but shouldn't happen.
+  }
 
   integer_register r = Isambard_11( memory_manager, 1, size.r ); // Allocate
 
@@ -378,7 +393,6 @@ void MapValue__DRIVER_SYSTEM__get_ms_timer_ticks( MapValue o )
 void MapValue__DRIVER_SYSTEM__get_core_timer_value( MapValue o )
 {
   o = o;
-  MapValue__DRIVER_SYSTEM__get_core_timer_value__return( NUMBER__from_integer_register( all_interrupts ) );
   MapValue__DRIVER_SYSTEM__get_core_timer_value__return( NUMBER__from_integer_register( core_timer_value() ) );
 }
 
@@ -394,6 +408,50 @@ void MapValue__DRIVER_SYSTEM__remove_interrupt_handler( MapValue o, INTERRUPT_HA
   o = o;
   board_remove_interrupt_handler( handler, interrupt.r );
   MapValue__DRIVER_SYSTEM__remove_interrupt_handler__return();
+}
+
+void __attribute__(( noreturn )) ContiguousMemoryBlock__PHYSICAL_MEMORY_BLOCK__physical_address( ContiguousMemoryBlock cmb )
+{
+  ContiguousMemoryBlock__PHYSICAL_MEMORY_BLOCK__physical_address__return( NUMBER__from_integer_register( cmb.start_page << 12) );
+}
+
+void __attribute__(( noreturn )) ContiguousMemoryBlock__PHYSICAL_MEMORY_BLOCK__size( ContiguousMemoryBlock cmb )
+{
+  ContiguousMemoryBlock__PHYSICAL_MEMORY_BLOCK__size__return( NUMBER__from_integer_register( cmb.page_count << 12) );
+}
+
+void __attribute__(( noreturn )) ContiguousMemoryBlock__PHYSICAL_MEMORY_BLOCK__is_read_only( ContiguousMemoryBlock cmb )
+{
+  ContiguousMemoryBlock__PHYSICAL_MEMORY_BLOCK__is_read_only__return( NUMBER__from_integer_register( cmb.read_only ) );
+}
+
+void __attribute__(( noreturn )) ContiguousMemoryBlock__PHYSICAL_MEMORY_BLOCK__read_only_copy( ContiguousMemoryBlock cmb )
+{
+  ContiguousMemoryBlock new_cmb = cmb;
+  new_cmb.read_only = 1;
+
+  // Don't use the ContiguousMemoryBlock_PHYSICAL_MEMORY_BLOCK_to_return routine, the handler must be the
+  // special value for the kernel to recognise it.
+  PHYSICAL_MEMORY_BLOCK result;
+  result.r = interface_to_return( (void*) System_Service_PhysicalMemoryBlock, (void*)new_cmb.r );
+  ContiguousMemoryBlock__PHYSICAL_MEMORY_BLOCK__read_only_copy__return( result );
+}
+
+void __attribute__(( noreturn )) ContiguousMemoryBlock__PHYSICAL_MEMORY_BLOCK__subblock( ContiguousMemoryBlock cmb, NUMBER offset, NUMBER size )
+{
+  if (0 != (offset.r & 0xfff)) ContiguousMemoryBlock__exception( 0 );
+  if (0 != (size.r & 0xfff)) ContiguousMemoryBlock__exception( 0 );
+
+  ContiguousMemoryBlock new_cmb = cmb;
+  new_cmb.is_subpage = 1;
+  new_cmb.start_page += offset.r >> 12;
+  new_cmb.page_count = size.r >> 12;
+
+  // Don't use the ContiguousMemoryBlock_PHYSICAL_MEMORY_BLOCK_to_return routine, the handler must be the
+  // special value for the kernel to recognise it.
+  PHYSICAL_MEMORY_BLOCK result;
+  result.r = interface_to_return( (void*) System_Service_PhysicalMemoryBlock, (void*)new_cmb.r );
+  ContiguousMemoryBlock__PHYSICAL_MEMORY_BLOCK__subblock__return( result );
 }
 
 extern void subsequent_core_system_thread();
@@ -452,10 +510,11 @@ static void start_ms_timer()
 void __attribute__(( noreturn )) idle_thread_entry( Object system_interface,
                                                     Object memory_manager_map,
 						    uint32_t core_number,
-						    uint64_t free_memory_start,
-						    uint64_t free_memory_end )
+                                                    integer_register first_free_page )
 {
   system_interface = system_interface; // Already stored in system
+
+  allocatable_memory_base = first_free_page;
 
   this_core.number = core_number;
 
@@ -463,8 +522,6 @@ void __attribute__(( noreturn )) idle_thread_entry( Object system_interface,
     memory_manager = memory_manager_map;
 
     board_initialise();
-
-    Isambard_20( memory_manager, 0, free_memory_start, free_memory_end ); // Initialise
 
     board_initialised = true;
 

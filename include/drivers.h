@@ -36,6 +36,7 @@ ISAMBARD_INTERFACE( PHYSICAL_MEMORY_BLOCK )
 ISAMBARD_INTERFACE( INTERRUPT_HANDLER )
 #include "interfaces/client/SYSTEM.h"
 #include "interfaces/client/DRIVER_SYSTEM.h"
+#include "interfaces/client/PHYSICAL_MEMORY_BLOCK.h"
 
 extern integer_register stack_lock;
 extern integer_register __attribute__(( aligned( 16 ) )) stack[]; // Sized in libdriver.c

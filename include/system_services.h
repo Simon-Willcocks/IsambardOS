@@ -46,10 +46,12 @@ enum { DRIVER_SYSTEM_physical_address_of = 0x4a274f85 };
 typedef union {
   uint64_t r;
   struct __attribute__(( packed )) {
-    uint64_t start_page:24; // Max 16GB memory
-    uint64_t page_count:20;  // Max 4GB memory in one block
-    uint64_t reserved:17;
-    uint64_t memory_type:3;  // index into MAIR
+    uint64_t start_page:24;     // Max 16GB memory
+    uint64_t page_count:20;     // Max 4GB memory in one block
+    uint64_t read_only:1;
+    uint64_t reserved:15;
+    uint64_t is_subpage:1;      // There's another CMB which includes this one
+    uint64_t memory_type:3;     // index into MAIR
   };
 } ContiguousMemoryBlock;
 

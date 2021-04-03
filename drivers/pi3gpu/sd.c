@@ -6,11 +6,28 @@
 //  How to indicate when a command isn't supported by the card.
 //  Simple interface, or paired objects, maybe with asynchronous calls?
 
+// Protocol documents from https://www.sdcard.org/downloads/pls/
+// Initially, only supporting modern SD cards.
+
 #include "devices.h"
+
+ISAMBARD_INTERFACE( TRIVIAL_NUMERIC_DISPLAY )
+
+#include "interfaces/client/TRIVIAL_NUMERIC_DISPLAY.h"
+
+TRIVIAL_NUMERIC_DISPLAY tnd = {};
+extern uint32_t *mapped_memory;
 
 #define N( n ) NUMBER__from_integer_register( n )
 
+typedef enum { idle, ready, ident, stby, tran, data, rcv, prg, dis, ina } sd_states;
+
 static uint32_t volatile command_thread = 0;
+static uint32_t volatile current_cmdtm = 0;
+static uint32_t volatile pending_app_cmdtm = 0;
+static uint32_t volatile pending_app_command_arg = 0;
+static sd_states volatile acmd_expected_state = idle;
+
 static uint32_t volatile data_thread = 0;
 static uint32_t volatile interrupted = 0;
 
@@ -25,12 +42,12 @@ uint32_t *block_data = 0;
 uint32_t block_index = 0;
 uint32_t block_size = 0;
 
-uint32_t debug_progress = 0;
-uint32_t debug_last_command = 0;
-uint32_t debug_last_acommand = 0;
-uint32_t debug_last_interrupts = 0;
-uint32_t debug_all_interrupts = 0;
-uint32_t debug_interrupted = 0;
+#define debug_progress mapped_memory[48]
+#define debug_last_command mapped_memory[49]
+#define debug_last_acommand mapped_memory[50]
+#define debug_last_interrupts mapped_memory[51]
+#define debug_all_interrupts mapped_memory[52]
+#define debug_interrupted mapped_memory[53]
 
 /*
  * Blocks: uint32_t *block; uint32_t *next_block;
@@ -40,11 +57,30 @@ uint32_t debug_interrupted = 0;
 
 // When a card is inserted, it will be reset, the highest speed options chosen, and enter whatever mode...? FIXME
 
+static uint32_t const cmds[] = { 
+  [ 0] 0x00000000,
+  [ 2] 0x02090000, // no data transfer, no index check, check response crc, 136-bit response, no multi-block
+  [ 3] 0x030a0000, // no data transfer, no index check, check response crc, 48-bit response, no multi-block
+  [ 7] 0x070b0000, // no data transfer, no index check, check response crc, 48-bit response, no multi-block
+  [ 8] 0x080a0000, // no data transfer, no index check, check response crc, 48-bit response without busy, no multi-block
+  [17] 0x112a0010, // data read, no index check, check response crc, 48-bit response without busy, no multi-block
+  [18] 0x122a0036, // data read, no index check, check response crc, 48-bit response without busy, multi-block, send cmd12 when blocks received
+  [55] 0x370a0000  // no data transfer, no index check, check response crc, 48-bit response without busy, no multi-block
+};
+
+// Known app commands, must be preceded by a cmd[55]
+static uint32_t const acmds[] = {
+  [ 6] 0x06020000, // no data transfer, no index check, no crc check, 48-bit response without busy, no multi-block
+  [41] 0x29020000, // no data transfer, no index check, no crc check, 48-bit response without busy, no multi-block
+  [51] 0x33220010  // data read, no index check, no crc check, 48-bit response without busy, no multi-block
+};
+
+static uint32_t response[4];
+
 void emmc_interrupt()
 {
   uint32_t new_interrupts = devices.emmc.INTERRUPT;
-
-  memory_read_barrier(); // Completed our reads of devices.emmc
+if (mapped_memory != 0) { mapped_memory[7] = new_interrupts; mapped_memory[6]++; }
 
   if (new_interrupts != 0) {
     debug_last_interrupts = new_interrupts;
@@ -55,9 +91,41 @@ void emmc_interrupt()
     devices.emmc.INTERRUPT = new_interrupts; // Acknowledge interrupts.
 
     if (0 != (new_interrupts & 0x00000001)) {
-      if (command_thread != 0)
+      response[0] = devices.emmc.RESP0;
+      if (0x10000 == (current_cmdtm & 0x30000)) {
+        response[1] = devices.emmc.RESP1;
+        response[2] = devices.emmc.RESP2;
+        response[3] = devices.emmc.RESP3;
+      }
+mapped_memory[32] = response[0];
+mapped_memory[33] = response[1];
+mapped_memory[34] = response[2];
+mapped_memory[35] = response[3];
+mapped_memory[36] = current_cmdtm;
+mapped_memory[37] = pending_app_cmdtm;
+mapped_memory[38] = pending_app_command_arg;
+mapped_memory[39] = acmd_expected_state;
+mapped_memory[40] = ((response[0] >> 9) & 0xf);
+      if (current_cmdtm == cmds[55]) {
+        if (((response[0] >> 9) & 0xf) != acmd_expected_state) {
+  flush_and_invalidate_cache( (void*) 0x10000, 1024 );
+          asm ( "brk 2" );
+        }
+
+        if (pending_app_cmdtm != 0) {
+          current_cmdtm = pending_app_cmdtm;
+          pending_app_cmdtm = 0;
+          devices.emmc.ARG1 = pending_app_command_arg;
+          devices.emmc.CMDTM = current_cmdtm;
+        }
+        else {
+          asm ( "brk 2" );
+        }
+      }
+      else if (command_thread != 0) {
         wake_thread( command_thread );
-      else debug_interrupted += 0x10;
+      }
+      else asm ( "brk 2" );
     }
     if (0 != (new_interrupts & 0x00000002)) {
       if (data_thread != 0)
@@ -72,11 +140,14 @@ void emmc_interrupt()
       else debug_interrupted += 0x1000;
     }
     if (0 != (new_interrupts & 0x00000020)) {
-      // Data read
-      while (block_size > 0) {
-        block_data[block_index++] = devices.emmc.DATA;
-        block_size -= 4;
+      // Data readable
+      for (int i = 0; i < 128; i++) {
+        block_data[block_index+i] = devices.emmc.DATA;
       }
+      block_index += 128;
+      block_size -= 512;
+      mapped_memory[32] = block_index;
+      mapped_memory[33] = block_size;
       memory_read_barrier(); // Completed our reads of devices.emmc
     }
   }
@@ -84,6 +155,8 @@ void emmc_interrupt()
   if (0 != (new_interrupts & ~0x00000033)) {
      // asm ( "svc 1\nsvc 2\nsvc 3" );
   }
+
+  memory_read_barrier(); // Completed our reads of devices.emmc
 }
 
 enum device_id { SD_Card, UART0, UART1, USB_HCD, I2C0, I2C1, I2C2, SPI, CCP2TX, Unknown_RPi4_1, Unknown_RPi4_2 };
@@ -145,151 +218,164 @@ static uint32_t base_clock_rate( enum clock clock_id )
   return request[6];
 }
 
-static uint32_t const cmds[] = { 
-  [ 0] 0x00000000,
-  [ 2] 0x02090000, // no data transfer, no index check, check response crc, 136-bit response, no multi-block
-  [ 3] 0x030a0000, // no data transfer, no index check, check response crc, 48-bit response, no multi-block
-  [ 7] 0x070b0000, // no data transfer, no index check, check response crc, 48-bit response, no multi-block
-  [ 8] 0x080a0000, // no data transfer, no index check, check response crc, 48-bit response without busy, no multi-block
-  [17] 0x112a0010, // data read, no index check, check response crc, 48-bit response without busy, no multi-block
-  [55] 0x370a0000  // no data transfer, no index check, check response crc, 48-bit response without busy, no multi-block
-};
-
-// Known app commands, must be preceded by a cmd[55]
-static uint32_t const acmds[] = {
-  [ 6] 0x06020000, // no data transfer, no index check, no crc check, 48-bit response without busy, no multi-block
-  [41] 0x29020000, // no data transfer, no index check, no crc check, 48-bit response without busy, no multi-block
-  [51] 0x33220010  // data read, no index check, no crc check, 48-bit response without busy, no multi-block
-};
-
-static uint32_t response[4];
-
-typedef enum { idle, ready, ident, stby, tran, data, rcv, prg, dis, ina } sd_states;
-
 
 static inline void cmdtm( int cmd_code, uint32_t arg )
 {
-static int commands = 0x100;
-debug_last_command = cmd_code + ((commands++) << 12);
+  // cmd_code contains the command number, plus what the EMMC device should
+  // expect in response.
+debug_last_command = cmd_code;
+
+  command_thread = this_thread;
+  current_cmdtm = cmd_code;
 
   devices.emmc.ARG1 = arg;
   devices.emmc.CMDTM = cmd_code;
   dsb();
 
   wait_until_woken();
-  response[0] = devices.emmc.RESP0;
-  if (0x10000 == (cmd_code & 0x30000)) {
-    response[1] = devices.emmc.RESP1;
-    response[2] = devices.emmc.RESP2;
-    response[3] = devices.emmc.RESP3;
-  }
+
+  command_thread = 0;
 }
 
 static inline void command( int cmd, uint32_t arg )
 {
   if (cmd != 0 && cmds[cmd] == 0) {
-    asm ( "svc 1\nsvc 2\nsvc 2" );
+    asm ( "brk 2" );
   }
   cmdtm( cmds[cmd], arg );
 }
 
 static inline void app_command( int acmd, sd_states expected_state, uint32_t shifted_rca, uint32_t arg )
 {
-debug_last_acommand = acmd;
-
   if (acmds[acmd] == 0) {
-    asm ( "svc 1\nsvc 2\nsvc 2" );
+    asm ( "brk 2" );
   }
+
+  pending_app_cmdtm = acmds[acmd];
+  pending_app_command_arg = arg;
+  acmd_expected_state = expected_state;
+
+  // When the CMD55 completes, the ACMD will be executed by the interrupt handler
   command( 55, shifted_rca );
-  if (((response[0] >> 9) & 0xf) != expected_state) {
-    asm ( "svc 1\nsvc 2\nsvc 5" );
-  }
-  cmdtm( acmds[acmd], arg );
 }
 
 #define MEMSET_WITHOUT_ASM
 #define assert( x ) if (x) {}
 #include "memset.h"
 
-void initialise_sd_interface()
+static bool set_clock_rate( uint32_t target_rate )
 {
-  debug_progress = 3;
+  // NOTE: This code is assuming a fixed clock + divider, but the SoC seems
+  // to allow programmable clocks; min, max, set, etc. via mailbox i/f.
+  // Might be better the other way? (I'm assuming that's what bit 5 means.)
 
+  static uint64_t base_clock_rate_hz = 0;
+
+  if (base_clock_rate_hz == 0) {
+    debug_progress = 0x60;
+    base_clock_rate_hz = base_clock_rate( CLK_EMMC );
+    debug_progress = 0x61;
+  }
+  // Pi 3: 250MHz
+
+  uint64_t divider = (base_clock_rate_hz + target_rate - 1)/ target_rate;
+
+  if (divider == 0 || divider > 0x3ff) return false;
+
+  while (devices.emmc.STATUS & 3) {
+    memory_read_barrier(); // Completed our reads of devices.emmc
+    sleep_ms( 1 );
+  }
+
+  uint32_t control1 = devices.emmc.CONTROL1;
+
+  if (0 == (control1 & 4)) {
+debug_progress = 0x63;
+    control1 &= ~4; // Clears CLK_EN
+    memory_write_barrier(); // About to write to devices.emmc
+    devices.emmc.CONTROL1 = control1;
+    memory_read_barrier(); // Completed our reads of devices.emmc
+    sleep_ms( 2 );
+  }
+
+  control1 |= 0x00000001; // CLK_INTLEN (Clock enable for internal EMMC clocks for power saving)
+  control1 &= 0xfff0ffdf; // Clears CLK_GENSEL, DATA_TOUNIT
+  control1 |= 0x000e0000; // Set timeout to maximum
+
+  control1 &= 0xffff003f; // Clears CLK_FREQ8, CLK_FREQ_MS2 (divider)
+  control1 |= ((divider & 0xff) << 8) | ((divider & 0x300) >> 2);
+
+  memory_write_barrier(); // About to write to devices.emmc
+  devices.emmc.CONTROL1 = control1;
+  sleep_ms( 2 );
+
+  control1 |= 4;          // Enable clock
+  memory_write_barrier(); // About to write to devices.emmc
+  devices.emmc.CONTROL1 = control1;
+  sleep_ms( 2 );
+
+debug_progress = 0x62;
+  return true;
+}
+
+static bool prepare_for_interrupts_from_sd_port()
+{
   memory_write_barrier(); // About to write to devices.interrupts
   devices.interrupts.Enable_IRQs_2 = 0x40000000; // Arasan interrupt.
   dsb();
+  return true;
+}
 
-  if (!power_up( SD_Card )) {
-    debug_progress = 0xf1; wait_until_woken();
-    for (;;) { asm volatile ( "brk 2" ); }
-  }
-  debug_progress = 8;
+static bool power_up_sd_port()
+{
+  return power_up( SD_Card );
+}
 
+static bool initialise_mmc_hardware()
+{
   memory_write_barrier(); // About to write to devices.emmc
 
-  command_thread = this_thread;
-
   uint32_t control1 = devices.emmc.CONTROL1;
+  memory_read_barrier(); // Completed our reads of devices.emmc
+
   devices.emmc.CONTROL0 = 0; 
+  devices.emmc.CONTROL2 = 0;
   control1 |=  (1 << 24); // SRST_HC (Reset the complete host circuit)
   control1 &= ~(1 <<  2); // CLK_EN (SD clock enable)
   control1 &= ~(1 <<  0); // CLK_INTLEN (internal clocks enable)
   devices.emmc.CONTROL1 = control1;
 
-  memory_read_barrier(); // Completed our reads of devices.emmc
-  debug_progress = 9; yield();
-
   while (0 != (devices.emmc.CONTROL1 & (1 << 24))) {
     memory_read_barrier(); // Completed our reads of devices.emmc
-    yield();
+    sleep_ms( 1 );
   }
 
-  memory_read_barrier(); // Completed our reads of devices.emmc
-  debug_progress = 10; yield();
-  memory_write_barrier(); // About to write to devices.emmc
+  return true;
+}
 
-  devices.emmc.CONTROL2 = 0;
-  uint64_t base_clock_rate_hz = base_clock_rate( CLK_EMMC );
-  // Pi 3: 250MHz
+static bool initialise_sd_interface()
+{
+  debug_progress = 3;
+  if (!prepare_for_interrupts_from_sd_port()) return false;
 
-  if (base_clock_rate_hz < 400000) {
-    for (;;) { asm volatile ( "svc 1\n\tsvc 8" ); }
-  }
+  debug_progress = 8;
+  if (!power_up_sd_port()) return false;
 
-  // NOTE: This code is assuming a fixed clock + divider, but the SoC seems
-  // to allow programmable clocks; min, max, set, etc. via mailbox i/f.
-  // Might be better the other way? (I'm assuming that's what bit 5 means.)
+  debug_progress = 9;
+  if (!initialise_mmc_hardware()) return false;
+
+  debug_progress = 10;
 
   // set to 400KHz, for identification phase
-  uint32_t target_rate = 400000;
-  uint64_t divisor = (base_clock_rate_hz + target_rate - 1)/ target_rate;
+  if (!set_clock_rate( 400000 )) return false;
 
-  control1 = devices.emmc.CONTROL1;
-  control1 |= 0x00000001; // CLK_INTLEN (Clock enable for internal EMMC clocks for power saving)
-  control1 &= 0xfff0ffdf; // Clears CLK_GENSEL, DATA_TOUNIT
-  control1 |= 0x000e0000; // Maximum timeout
-  control1 &= 0xffff003f; // Clears CLK_FREQ8, CLK_FREQ_MS2
-  control1 |= ((divisor & 0xff) << 8) | ((divisor & 0x300) >> 2);
-  devices.emmc.CONTROL1 = control1;
-  memory_read_barrier(); // Completed our reads of devices.emmc
-
-  memory_read_barrier(); // Completed our reads of devices.emmc
-  debug_progress = 11; yield();
-  sleep_ms( 2 ); // From circle driver, I don't know why, but it's quick!
-
-  memory_write_barrier(); // About to write to devices.emmc
-  control1 = devices.emmc.CONTROL1;
-  control1 |= 0x00000004; // CLK_EN
-
-  devices.emmc.CONTROL1 = control1;
-  dsb();
-  memory_read_barrier(); // Completed our reads of devices.emmc
-
-  sleep_ms( 2 ); // From circle driver, I don't know why, but it's quick!
+  debug_progress = 11;
 
   // All known interrupts, I like interrupts!
   // Not all known. According to circle/addon/SDCard/emmc.cpp, bits 6 and 7 are insertion and removal
+  // git clone https://github.com/rsta2/circle.git
   // On startup, bit 6 is set (card is inserted; level sensitive?)
+
   devices.emmc.IRPT_MASK = 0x017f71b7;
   devices.emmc.IRPT_EN   = 0x017f71b7;
 
@@ -297,10 +383,16 @@ void initialise_sd_interface()
 
   while (0 == (devices.emmc.CONTROL1 & (1 << 1))) { // CLK_STABLE
     memory_read_barrier(); // Completed our reads of devices.emmc
-    yield();
+    sleep_ms( 1 );
   }
 
-  debug_progress = 12; yield();
+  debug_progress = 12;
+
+  return true;
+}
+
+static bool identify_device()
+{
   // idle, ready, ident, stby, tran, data, rcv, prg, dis, ina
   // State diagram for the initial states is trivial:
   // CMD0 -> idle -> [ CMD8 -> idle ] -> ACMD41 -> ready -> CMD2 -> ident -> CMD3 -> stby
@@ -319,25 +411,28 @@ void initialise_sd_interface()
   // First command... Go idle
   while (devices.emmc.STATUS & 3) {
     memory_read_barrier(); // Completed our reads of devices.emmc
-debug_last_acommand ++;
-    yield();
+    sleep_ms( 1 );
   }
-  debug_progress = 13; yield();
 
+  debug_progress = 13;
+
+  // Device: Go idle
   command( 0, 0 );
 
+  // Device: Send Interface Condition
   command( 8, 0x1aa ); // Voltage supplied: 2.7-3.6V, recommended check pattern
 
   // TODO Check for HC Check for reponse?
   // The important part of "48-bit" responses are returned in RESP0
   // The hardware checks the CRC, etc.
   if (0x1aa != (0xfff & response[0])) {
-    for (;;) asm volatile ( "svc 1\nsvc 2\n svc 2" );
+    return false;
   }
 
-  debug_progress = 16; yield();
-  // Inquiry ACMD41:
-  app_command( 41, idle, 0, 0 );
+  debug_progress = 16;
+
+  // Inform device of Host Capacity support, receive operating condition register
+  app_command( 41, idle, 0, 0x40000000 ); // HCS bit set
 
   bool powered_up = false;
   while (!powered_up) {
@@ -379,7 +474,7 @@ debug_last_acommand ++;
     shifted_rca = response[0] & 0xffff0000;
     if (ident != ((response[0] >> 9) & 0xf)) {
       // Wasn't in ident when receiving the command?
-      for (;;) asm volatile ( "svc 1\nsvc 2\n svc 4" );
+      asm ( "brk 2" );
     }
   }
 
@@ -400,22 +495,31 @@ debug_last_acommand ++;
   block_size = 8;
   block_data = (void*) 0x10100;
 
-  debug_progress = 18; yield();
+  debug_progress = 18;
 
-  app_command( 51, stby, shifted_rca, 0 );
+  app_command( 51, tran, shifted_rca, 0 );
   wait_until_woken(); // As data_thread...
 
-  debug_progress = 19; yield();
+  debug_progress = 19;
 
+  //if (!set_clock_rate( 50000000 )) return false;
+
+  debug_progress = 0x55;
+
+sleep_ms( 2000 );
+  // Debug code, remove!
   memory_write_barrier(); // About to write to devices.emmc
   devices.emmc.BLKSIZECNT = (1 << 16) | 512; // 1 block of 512 bytes
   block_index = 0;
   block_size = 512;
   block_data = (void*) 0x10200;
-  command( 17, 0xc2c0 ); // testblock.bin
+  command( 17, 0xc2c0 ); // testblock.bin block number
   wait_until_woken(); // As data_thread...
 
   flush_and_invalidate_cache( (void*) 0x10200, 512 );
+
+sleep_ms( 2000 );
+  return true;
 }
 
 typedef struct EMMC { 
@@ -429,18 +533,12 @@ uint64_t emmc_lock = 0;
 ISAMBARD_INTERFACE( BLOCK_DEVICE )
 #include "interfaces/provider/BLOCK_DEVICE.h"
 
-ISAMBARD_INTERFACE( TRIVIAL_NUMERIC_DISPLAY )
-
-#include "interfaces/client/TRIVIAL_NUMERIC_DISPLAY.h"
-
 ISAMBARD_BLOCK_DEVICE__SERVER( EMMC )
 ISAMBARD_PROVIDER( EMMC, AS_BLOCK_DEVICE( EMMC ) )
 ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( EMMC, RETURN_FUNCTIONS_BLOCK_DEVICE( EMMC ), emmc_lock, emmc_stack, 64 * 8 )
 
 extern PHYSICAL_MEMORY_BLOCK test_memory;
-extern uint32_t *mapped_memory;
 
-TRIVIAL_NUMERIC_DISPLAY tnd = {};
 uint32_t initialisation_thread = -1;
 
 void show_page_thread()
@@ -559,6 +657,8 @@ void __attribute__(( noreturn )) timer_thread()
 
 void start_show_page_thread()
 {
+  initialisation_thread = this_thread;
+
 #if 0
   static struct {
     uint64_t stack[64];
@@ -577,37 +677,121 @@ void start_show_page_thread()
     create_thread( hammer_tag_interface, (uint64_t*) (0x11000 - (i * 0x100)) );
   }
 #endif
+
+  wait_until_woken(); // Show page thread is running
 }
 
 void expose_emmc()
 {
-  initialisation_thread = this_thread;
-
-  start_show_page_thread();
-
-  debug_progress = 0x88;
-
   debug_progress = 0x11;
-  wait_until_woken(); // While debugging, this means that the frame buffer had been initialised, so we're the only driver using the mailbox
+  start_show_page_thread();
   debug_progress = 0x33;
 
-    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 900 ), N( 10 ), N( this_thread ), N( 0xfff0f0f0 ) );
+  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 900 ), N( 10 ), N( this_thread ), N( 0xfff0f0f0 ) );
   debug_progress = 1;
 
-  EMMC__BLOCK_DEVICE__register_service( "EMMC", &emmc_service_singleton );
-
-  debug_progress = 2;
   for (int i = 0; i < 100; i++) { sleep_ms( 20 ); mapped_memory[2] = i; }
 
-  initialise_sd_interface();
+  if (!initialise_sd_interface()) return;
   debug_progress = 20;
+  if (!identify_device()) return;
 
-  wait_until_woken();
+  debug_progress = 21;
+  EMMC__BLOCK_DEVICE__register_service( "EMMC", &emmc_service_singleton );
+  debug_progress = 22;
 }
 
-void EMMC__BLOCK_DEVICE__read_4k_pages( EMMC o, PHYSICAL_MEMORY_BLOCK dest, NUMBER start, NUMBER count )
+void EMMC__BLOCK_DEVICE__read_4k_pages( EMMC o, PHYSICAL_MEMORY_BLOCK dest, NUMBER first_block )
 {
-  o = o; dest = dest; start = start; count = count;
+  o = o;
+
+  debug_progress = 0x40;
+  if (PHYSICAL_MEMORY_BLOCK__is_read_only( dest ).r) {
+    EMMC__exception( 0 ); // name_code( "Memory not writable" ) );
+  }
+  uint32_t size = PHYSICAL_MEMORY_BLOCK__size( dest ).r;
+  uint32_t start_pa = PHYSICAL_MEMORY_BLOCK__physical_address( dest ).r;
+  data_thread = this_thread;
+
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( 10 ), N( 0x22222222 ), N( 0xffffffff ) ); asm( "svc 0" ); sleep_ms( 1000 );
+#ifndef dodma
+  block_data = (void *) (6 << 20);
+  block_index = 0;
+  block_size = size;
+
+  DRIVER_SYSTEM__map_at( driver_system(), dest, NUMBER__from_pointer( block_data ) );
+#else
+  // Disable data interrupt, from now on using DMA
+  devices.emmc.IRPT_MASK = 0x017f7197;
+  devices.emmc.IRPT_EN   = 0x017f7197;
+
+  struct DMA_Control {
+    uint32_t TI; // Transfer Information
+    uint32_t SOURCE_AD;
+    uint32_t DEST_AD;
+    uint32_t TXFR_LEN;
+    uint32_t STRIDE;
+    uint32_t NEXTCONBK;
+  } __attribute__(( aligned( 32 ) )) dma_cntrl;
+
+  dma_cntrl.TI = (11 << 16) // Peripheral emmc
+               | ( 1 << 10) // Use DREQ for source
+               | ( 0 <<  9) // Src width 0 = 32bit, 1 = 128 bit
+               | ( 0 <<  8) // Src increment (4 or 32 bytes)
+               | ( 1 <<  5) // Destination width  0 = 32bit, 1 = 128 bit
+               | ( 1 <<  4) // Destination increment
+               | ( 0 <<  1) // 2D Mode
+               | ( 0 <<  0);// Interrupt enable
+  dma_cntrl.SOURCE_AD = 0xc0000000 | 0x3f300020; // devices.emmc.DATA Unchached bus address?
+  dma_cntrl.DEST_AD = start_pa;
+  dma_cntrl.TXFR_LEN = size;
+  dma_cntrl.STRIDE = 0;
+  dma_cntrl.NEXTCONBK = 0;
+  NUMBER pa = DRIVER_SYSTEM__physical_address_of( driver_system(),
+                NUMBER__from_pointer( &dma_cntrl ) );
+  flush_and_invalidate_cache( (void*) &dma_cntrl, sizeof( dma_cntrl ) );
+{
+  // Request available DMA channels (presumably others are used by GPU)
+  uint32_t __attribute(( aligned( 16 ) )) request[7] = { sizeof( request ), 0, 0x00060001, 4, 0, 0, 0 };
+  mailbox_tag_request( request );
+
+  if (request[1] != 0x80000000 || request[4] != 0x80000004) {
+    asm ( "brk 9" );
+  }
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( 100 ), N( request[5] ), N( 0xff0000ff ) ); asm( "svc 0" ); sleep_ms( 1000 );
+if ((request[5] & 1) == 0) {
+  for (;;) {}  // Actually returns 7f35, so dma 0 is available...
+}
+}
+
+
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( 10 ), N( 0x33333333 ), N( 0xffffffff ) ); asm( "svc 0" ); sleep_ms( 1000 );
+  memory_write_barrier(); // About to write to devices.dma
+  devices.dma[0].CONBLK_AD = pa.r;
+  devices.dma[0].CS = 1;
+
+TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1700 ), N( 50 ), NUMBER__from_pointer( &devices.dmactl.INT_STATUS ), N( 0xffffffff ) ); asm( "svc 0" ); sleep_ms( 1000 );
+TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1700 ), N( 60 ), NUMBER__from_pointer( &devices.dmactl.ENABLE ), N( 0xffffffff ) ); asm( "svc 0" ); sleep_ms( 1000 );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( 70 ), N( devices.dmactl.INT_STATUS ), N( 0xffff00ff ) ); asm( "svc 0" ); sleep_ms( 1000 );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( 80 ), N( devices.dmactl.ENABLE ), N( 0xffffff00 ) ); asm( "svc 0" ); sleep_ms( 1000 );
+#endif
+
+  // Kick off transfer for the DMA to put into memory
+  memory_write_barrier(); // About to write to devices.emmc
+  devices.emmc.BLKSIZECNT = ((size / 512) << 16) | 512; // blocks of 512 bytes
+
+  data_thread = this_thread;
+
+  command( 18, first_block.r );
+
+  wait_until_woken(); // As data thread
+
+  if (block_index != size/4) {
+    EMMC__exception( 0 );
+  }
+
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( 10 ), N( 0x66666666 ), N( 0xffffffff ) );
+
   EMMC__BLOCK_DEVICE__read_4k_pages__return();
 }
 

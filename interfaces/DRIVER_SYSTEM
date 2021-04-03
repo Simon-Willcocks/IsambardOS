@@ -1,12 +1,20 @@
 
 interface DRIVER_SYSTEM
-get_device_page IN physical_address: NUMBER OUT block: PHYSICAL_MEMORY_BLOCK
-get_physical_memory_block IN start: NUMBER, size: NUMBER OUT block: PHYSICAL_MEMORY_BLOCK
-map_at IN block: PHYSICAL_MEMORY_BLOCK, start: NUMBER
-physical_address_of IN va: NUMBER OUT pa: NUMBER
-get_core_interrupts_count OUT count: NUMBER
-get_ms_timer_ticks OUT ticks: NUMBER
-get_core_timer_value OUT value: NUMBER
-register_interrupt_handler IN handler: INTERRUPT_HANDLER, interrupt: NUMBER
-remove_interrupt_handler IN handler: INTERRUPT_HANDLER, interrupt: NUMBER
+  get_device_page IN physical_address: NUMBER OUT block: PHYSICAL_MEMORY_BLOCK
+  get_physical_memory_block IN start: NUMBER, size: NUMBER OUT block: PHYSICAL_MEMORY_BLOCK
+
+  # block must not overlap any existing virtual memory
+  map_at IN block: PHYSICAL_MEMORY_BLOCK, start: NUMBER
+
+  physical_address_of IN va: NUMBER OUT pa: NUMBER
+
+  get_core_interrupts_count OUT count: NUMBER
+  get_ms_timer_ticks OUT ticks: NUMBER
+  get_core_timer_value OUT value: NUMBER
+
+  register_interrupt_handler IN handler: INTERRUPT_HANDLER, interrupt: NUMBER
+  remove_interrupt_handler IN handler: INTERRUPT_HANDLER, interrupt: NUMBER
+
+  # Can only be called once, must be called before anything tries to allocate memory
+  set_memory_top IN top: NUMBER
 end

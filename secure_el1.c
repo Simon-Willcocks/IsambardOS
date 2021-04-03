@@ -755,7 +755,7 @@ void map_initial_storage( Core *core0, unsigned initial_heap, unsigned initial_i
 
 uint64_t volatile standard_isambard_cores = 0;
 
-void initialise_driver_maps( Core *core0, integer_register free_memory_start, integer_register free_memory_end )
+void initialise_driver_maps( Core *core0, integer_register first_free_page )
 {
   // Running in high memory
 
@@ -786,8 +786,7 @@ void initialise_driver_maps( Core *core0, integer_register free_memory_start, in
       thread->regs[0] = system_map_index;
       thread->regs[1] = memory_allocator_map_index;
       thread->regs[2] = n;
-      thread->regs[3] = free_memory_start;
-      thread->regs[4] = free_memory_end;
+      thread->regs[3] = first_free_page;
       core0[n].runnable = thread;
     }
   }
@@ -801,7 +800,7 @@ void initialise_driver_maps( Core *core0, integer_register free_memory_start, in
      || (drivers[i].end & 0xfff)) {
       BSOD( __COUNTER__ );
     }
-    static const int INITIAL_VMBs_PER_DRIVER = 8;
+    static const int INITIAL_VMBs_PER_DRIVER = 12;
 
     VirtualMemoryBlock *vmb = (void*) allocate_heap( INITIAL_VMBs_PER_DRIVER * sizeof( VirtualMemoryBlock ) );
 
@@ -877,7 +876,7 @@ void __attribute__(( noreturn )) enter_secure_el1_himem( Core *core )
     initialise_system_map();
 
     // FIXME real start and end
-    initialise_driver_maps( core, 12 * (1 << 20), 256 * (1 << 20) );
+    initialise_driver_maps( core, first_free_page );
 
     initialising = false;
 

@@ -1,3 +1,8 @@
 
 interface PHYSICAL_MEMORY_BLOCK
+physical_address OUT pa: NUMBER
+size OUT size: NUMBER
+is_read_only OUT read_only: NUMBER
+read_only_copy OUT copy: PHYSICAL_MEMORY_BLOCK
+subblock IN offset: NUMBER, size: NUMBER OUT subblock: PHYSICAL_MEMORY_BLOCK
 end

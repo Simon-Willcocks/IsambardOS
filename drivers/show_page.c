@@ -1,11 +1,5 @@
 /* Copyright (c) 2020 Simon Willcocks */
 
-// Provide access to the frame buffer.
-// Only does Full HD 1920x1080
-// Only does 32-bit colour depth
-// Doesn't play nice and yield while waiting for mailbox response
-// Doesn't play nice with anyone else using the mailbox
-
 #include "drivers.h"
 
 ISAMBARD_INTERFACE( FRAME_BUFFER )

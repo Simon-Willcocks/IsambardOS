@@ -95,12 +95,21 @@ void entry()
   map_page( 0x3f300000, (void*) &devices.emmc );
   map_page( 0x3f200000, (void*) &devices.gpio );
   map_page( 0x3f003000, (void*) &devices.system_timer );
+  map_page( 0x3f007000, (void*) &devices.dma );
 
   INTERRUPT_HANDLER obj = GPU__INTERRUPT_HANDLER__to_pass_to( system.r, &gpu_interrupt_handler_singleton );
 
   DRIVER_SYSTEM__register_interrupt_handler( driver_system(), obj, NUMBER__from_integer_register( 8 ) );
 
-  expose_gpu_mailbox(); // Needed by FB, EMMC
+  expose_gpu_mailbox(); // Needed by FB, EMMC, this routine
+
+  uint32_t __attribute(( aligned( 16 ) )) request[8] = { sizeof( request ), 0, 0x00010005, 8, 0, 0, 0, 0 };
+  mailbox_tag_request( request );
+
+  if (request[1] != 0x80000000 || request[4] != 0x80000008) {
+    asm ( "brk 1" );
+  }
+  DRIVER_SYSTEM__set_memory_top( driver_system(), NUMBER__from_integer_register( request[6] ) );
 
   memory_write_barrier(); // About to write to devices.interrupts
   // devices.interrupts.Enable_Basic_IRQs = 1; // Enable "ARM Timer" IRQ
@@ -108,5 +117,7 @@ void entry()
 
   expose_frame_buffer();
   expose_emmc();
+
+  wait_until_woken();
 }
 

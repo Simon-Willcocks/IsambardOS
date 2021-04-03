@@ -145,6 +145,32 @@ extern struct __attribute__(( packed )) {
     uint32_t unused[1024-7];
   } system_timer;
 
+  union {
+    uint32_t sizer[0x100/4];
+    struct {
+      uint32_t CS;
+      uint32_t CONBLK_AD;
+      uint32_t TI;
+      uint32_t SOURCE_AD;
+      uint32_t DEST_AD;
+      uint32_t TXFR_LEN;
+      uint32_t STRIDE; // Not 7-14
+      uint32_t NEXTCONBK;
+      uint32_t DEBUG;
+    };
+  } dma[15]; // Note: DMA 15 is not at dma[15], it is at 0x??E05000.
+  struct {
+    uint32_t sizer[0xe0/4];
+    uint32_t INT_STATUS;
+    uint32_t dummye4;
+    uint32_t dummye8;
+    uint32_t dummyec;
+    uint32_t ENABLE;
+    uint32_t dummyf4;
+    uint32_t dummyf8;
+    uint32_t dummyfc;
+  } dmactl;
+
 } volatile  __attribute__(( aligned(4096) )) devices;
 
 extern void emmc_interrupt();
