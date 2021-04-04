@@ -43,16 +43,9 @@ struct mailbox_channel channels[16] = {};
 static uint32_t blocking_message = 0;
 static uint64_t blocked_sending_thread = 0;
 
-extern uint32_t *mapped_memory;
-
 void mailbox_interrupt()
 {
   uint32_t mailbox0_pending = devices.mailbox[0].config;
-
-if (mapped_memory != 0) {
-  mapped_memory[16] = mailbox0_pending;
-  mapped_memory[18] |= mailbox0_pending;
-}
 
   if ((mailbox0_pending & 0x10) != 0) { // Not empty
     if (blocking_message != 0) {
@@ -116,16 +109,8 @@ ISAMBARD_PROVIDER( MBOX, AS_GPU_MAILBOX( MBOX ) )
 // Using the driver initialisation stack
 ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( MBOX, RETURN_FUNCTIONS_GPU_MAILBOX( MBOX ), mailbox_stack_lock, mailbox_stack, 64 * 8 )
 
-PHYSICAL_MEMORY_BLOCK test_memory = {};
-uint32_t *mapped_memory = 0;
-
 void expose_gpu_mailbox()
 {
-  test_memory = SYSTEM__allocate_memory( system, NUMBER__from_integer_register( 4096 ) );
-  DRIVER_SYSTEM__map_at( driver_system(), test_memory, NUMBER__from_integer_register( 0x10000 ) );
-  mapped_memory = (void*) (0x10000);
-  for (int i = 0; i < 1024; i++) mapped_memory[i] = 0;
-
   MANAGER__GPU_MAILBOX_MANAGER__register_service( "Pi GPU Mailboxes", 0 );
 }
 
@@ -206,9 +191,6 @@ void MBOX__GPU_MAILBOX__queue_message( MBOX channel, NUMBER message )
     dsb();
     memory_read_barrier(); // Finished reading from devices.mailbox
 
-if (mapped_memory != 0) {
-  mapped_memory[20]++;
-}
     sleep_ms( 10 ); // Timeout is just in case all requests were responded to and removed from mailbox 0 between reading status and setting blocked_sending_thread
   }
   memory_read_barrier(); // Finished reading from devices.mailbox

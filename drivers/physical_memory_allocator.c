@@ -75,7 +75,7 @@ void make_list_of_freed_chunks( uint64_t p, uint64_t end )
 
   // This occurs before anything can request memory
 
-#define assert( x ) if (!(x)) {}
+#define assert( x ) if (!(x)) { asm ( "brk 1" ); }
 #define initialise_block( min, max, next_action ) \
         blocks( min, max, \
         { \

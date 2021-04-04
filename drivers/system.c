@@ -350,9 +350,11 @@ void MapValue__DRIVER_SYSTEM__set_memory_top( MapValue o, NUMBER top )
 {
   o = o;
 
+  Isambard_20( memory_manager, 0, allocatable_memory_base, top.r ); // Initialise
+
   allocatable_memory_top = top.r;
 
-  Isambard_20( memory_manager, 0, allocatable_memory_base, top.r ); // Initialise
+  MapValue__DRIVER_SYSTEM__set_memory_top__return();
 }
 
 void MapValue__SYSTEM__allocate_memory( MapValue o, NUMBER size )
@@ -523,6 +525,9 @@ void __attribute__(( noreturn )) idle_thread_entry( Object system_interface,
 
     board_initialise();
 
+  Isambard_20( memory_manager, 0, allocatable_memory_base, 512 * 1024 * 1024 ); // Initialise
+
+  allocatable_memory_top = 512 * 1024 * 1024;
     board_initialised = true;
 
     asm volatile ( "dsb sy\n\tsev" );

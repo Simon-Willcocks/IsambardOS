@@ -89,6 +89,9 @@ void map_page( uint64_t physical, void *virtual )
   DRIVER_SYSTEM__map_at( driver_system(), device_page, NUMBER__from_integer_register( (integer_register) virtual ) );
 }
 
+PHYSICAL_MEMORY_BLOCK test_memory = {};
+uint32_t *mapped_memory = 0;
+
 void entry()
 {
   map_page( 0x3f00b000, (void*) &devices.unused1 );
@@ -97,19 +100,18 @@ void entry()
   map_page( 0x3f003000, (void*) &devices.system_timer );
   map_page( 0x3f007000, (void*) &devices.dma );
 
+  //DRIVER_SYSTEM__set_memory_top( driver_system(), NUMBER__from_integer_register( 512 * 1024 * 1024 ) );
+
   INTERRUPT_HANDLER obj = GPU__INTERRUPT_HANDLER__to_pass_to( system.r, &gpu_interrupt_handler_singleton );
 
   DRIVER_SYSTEM__register_interrupt_handler( driver_system(), obj, NUMBER__from_integer_register( 8 ) );
 
   expose_gpu_mailbox(); // Needed by FB, EMMC, this routine
 
-  uint32_t __attribute(( aligned( 16 ) )) request[8] = { sizeof( request ), 0, 0x00010005, 8, 0, 0, 0, 0 };
-  mailbox_tag_request( request );
-
-  if (request[1] != 0x80000000 || request[4] != 0x80000008) {
-    asm ( "brk 1" );
-  }
-  DRIVER_SYSTEM__set_memory_top( driver_system(), NUMBER__from_integer_register( request[6] ) );
+  test_memory = SYSTEM__allocate_memory( system, NUMBER__from_integer_register( 4096 ) );
+  DRIVER_SYSTEM__map_at( driver_system(), test_memory, NUMBER__from_integer_register( 0x10000 ) );
+  mapped_memory = (void*) (0x10000);
+  for (int i = 0; i < 1024; i++) mapped_memory[i] = 0;
 
   memory_write_barrier(); // About to write to devices.interrupts
   // devices.interrupts.Enable_Basic_IRQs = 1; // Enable "ARM Timer" IRQ
@@ -117,6 +119,25 @@ void entry()
 
   expose_frame_buffer();
   expose_emmc();
+
+  sleep_ms( 20000 );
+
+  uint32_t *request = mapped_memory + 96;
+  request[0] = 8*4;
+  request[1] = 0;
+  request[2] = 0x00010005;
+  request[3] = 8;
+  request[4] = 0;
+  request[5] = 0;
+  request[6] = 0;
+  request[7] = 0;
+
+  mailbox_tag_request( request );
+
+  if (request[1] != 0x80000000 || request[4] != 0x80000008) {
+    asm ( "brk 1" );
+  }
+  //DRIVER_SYSTEM__set_memory_top( driver_system(), NUMBER__from_integer_register( request[6] ) );
 
   wait_until_woken();
 }

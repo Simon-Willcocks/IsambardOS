@@ -683,6 +683,8 @@ void start_show_page_thread()
 
 void expose_emmc()
 {
+while (!mapped_memory) { yield(); }
+
   debug_progress = 0x11;
   start_show_page_thread();
   debug_progress = 0x33;
