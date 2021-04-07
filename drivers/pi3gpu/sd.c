@@ -882,7 +882,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( 10 ), N( 0x22222222 ), 
   uint32_t source_pa = DRIVER_SYSTEM__physical_address_of( driver_system(), NUMBER__from_pointer( &fake_source ) ).r;
 
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 10 ), N( source_pa ), N( 0xfffff000 ) );
-  dma_cntrl.TI = ( 1 << 26) // Not wide bursts
+  dma_cntrl.TI = ( 0 << 26) // Not wide bursts
                | ( 0 << 21) // Waits
                | ( 0 << 16) // Peripheral: None; not needed for AXI peripherals
                | ( 0 << 12) // Burst Transfer Length
@@ -899,7 +899,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 10 ), N( source_pa ), N
   // Experimentally, DMA from the 0 alias contains zero bytes, not what was loaded from the SD card on boot.
   // From the 4 alias gets the correct data, but only every second destination 64-bit word is filled
   dma_cntrl.SOURCE_AD = source_pa | 0x40000000; // 0xc0000000 | 0x3f300020; // devices.emmc.DATA Unchached bus address?
-  dma_cntrl.DEST_AD = 0x40000000 | start_pa;
+  dma_cntrl.DEST_AD = start_pa;
   dma_cntrl.TXFR_LEN = size;
   dma_cntrl.STRIDE = 0;
   dma_cntrl.NEXTCONBK = 0;
