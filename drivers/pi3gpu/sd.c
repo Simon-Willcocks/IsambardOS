@@ -882,7 +882,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( 10 ), N( 0x22222222 ), 
   uint32_t source_pa = DRIVER_SYSTEM__physical_address_of( driver_system(), NUMBER__from_pointer( &fake_source ) ).r;
 
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 10 ), N( source_pa ), N( 0xfffff000 ) );
-  dma_cntrl.TI = ( 1 << 26) // Not wide bursts
+  dma_cntrl.TI = ( 0 << 26) // Not wide bursts
                | ( 0 << 21) // Waits
                | ( 0 << 16) // Peripheral: None; not needed for AXI peripherals
                | ( 0 << 12) // Burst Transfer Length
