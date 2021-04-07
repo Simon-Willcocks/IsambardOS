@@ -91,9 +91,19 @@ void map_page( uint64_t physical, void *virtual )
 
 PHYSICAL_MEMORY_BLOCK test_memory = {};
 uint32_t *mapped_memory = 0;
+uint64_t mapped_memory_pa = 0;
+
+void trapper()
+{
+  asm ( "brk 6" );
+}
 
 void entry()
 {
+  static bool initialised = false;
+  if (initialised) for (;;) {}
+  initialised = true;
+
   map_page( 0x3f00b000, (void*) &devices.unused1 );
   map_page( 0x3f300000, (void*) &devices.emmc );
   map_page( 0x3f200000, (void*) &devices.gpio );
@@ -111,7 +121,8 @@ void entry()
   test_memory = SYSTEM__allocate_memory( system, NUMBER__from_integer_register( 4096 ) );
   DRIVER_SYSTEM__map_at( driver_system(), test_memory, NUMBER__from_integer_register( 0x10000 ) );
   mapped_memory = (void*) (0x10000);
-  for (int i = 0; i < 1024; i++) mapped_memory[i] = 0;
+  mapped_memory_pa = PHYSICAL_MEMORY_BLOCK__physical_address( test_memory ).r;
+  for (int i = 0; i < 1024; i++) mapped_memory[i] = 0x80000000;
 
   memory_write_barrier(); // About to write to devices.interrupts
   // devices.interrupts.Enable_Basic_IRQs = 1; // Enable "ARM Timer" IRQ
@@ -119,9 +130,10 @@ void entry()
 
   expose_frame_buffer();
   expose_emmc();
-
+#if 0
   sleep_ms( 20000 );
 
+  // Breaks some other things!
   uint32_t *request = mapped_memory + 96;
   request[0] = 8*4;
   request[1] = 0;
@@ -138,6 +150,7 @@ void entry()
     asm ( "brk 1" );
   }
   //DRIVER_SYSTEM__set_memory_top( driver_system(), NUMBER__from_integer_register( request[6] ) );
+#endif
 
   wait_until_woken();
 }

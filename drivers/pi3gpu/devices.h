@@ -1,6 +1,6 @@
 #include "drivers.h"
 
-#define STACK_SIZE 64
+#define STACK_SIZE 128
 
 extern struct __attribute__(( packed )) {
   uint32_t unused1[0x80]; // ... 0x200
@@ -184,3 +184,4 @@ extern void mailbox_tag_request( uint32_t *request );
 
 static void dsb() { asm volatile ( "dsb sy" ); }
 
+extern void flush_and_invalidate_cache( void *start, int length );

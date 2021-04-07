@@ -143,10 +143,7 @@ void blink_number( uint32_t base, uint32_t number )
 
 
 static uint32_t *const mapped_address = (void*) 0x0e400000;
-static const uint32_t width = 1920;
-static const uint32_t height = 1080;
 static const uint32_t vwidth = 1920;
-static const uint32_t vheight = 1080;
 
 enum fb_colours {
   Black   = 0xff000000,
@@ -401,15 +398,13 @@ void showme()
   led_blink( 0x3f200000, 3 );
   for (;;) {
     showregs();
-    uint64_t *page = (void*) 0xfff000;
-    // page = page[511] & ~0xfff;
+    uint32_t *page = (void*) 0x3b000;
     for (;;) {
-show_page( (void*) page );
-    for (uint64_t i = 0; i < LED_BLINK_TIME * 400; i++) { asm volatile ( "" ); }
-//    page = (void*) ((uint64_t) page ^ 0xff0000);
+show_page( page );
+    for (uint64_t i = 0; i < LED_BLINK_TIME * 40; i++) { asm volatile ( "" ); }
 }
 
-    for (int i = 0; i < 0x30000; i+= 0x1000)
+    for (uint64_t i = 0; i < 0x30000; i+= 0x1000)
     {
       showregs();
       show_page( (void*) i );

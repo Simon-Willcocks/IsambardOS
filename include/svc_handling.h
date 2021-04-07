@@ -458,7 +458,8 @@ static inline thread_switch handle_svc( Core *core, thread_context *thread, int 
     thread->stack_pointer++;
     thread->spsr |= (1<<28); // oVerflow flag set
 
-    asm ( "smc 4" );
+// Still at the stage where everything should be working properly, so exceptions are exceptional!
+asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :: [r0] "r" (thread->regs[0]), [r1] "r" (thread->regs[1]), [r2] "r" (thread->regs[2]), [r30] "r" (thread->regs[30])  );
 
     return result;
   }
@@ -506,7 +507,7 @@ static inline thread_switch handle_svc( Core *core, thread_context *thread, int 
       }
     }
 
-    if (interface->user != thread->current_map) { asm ( "mov x25, %[u]\n\tmov x26, %[i]\n\tmov x27, %[v]" : : [u] "r" (interface->user), [i] "r" (thread->regs[0]), [v] "r" (thread->regs[1]) ); BSOD( __COUNTER__ ); }
+    if (interface->user != thread->current_map) { asm ( "mov x24, %[u]\n\tmov x25, %[i]\n\tmov x26, %[v]\n\tmov x27, %[p]\n\tmov x28, %[l]" : : [u] "r" (interface->user), [i] "r" (thread->regs[0]), [p] "r" (thread->regs[2]), [v] "r" (thread->regs[1]), [l] "r" (thread->regs[30]) ); BSOD( __COUNTER__ ); }
 
     thread->regs[0] = interface->object.as_number;
 

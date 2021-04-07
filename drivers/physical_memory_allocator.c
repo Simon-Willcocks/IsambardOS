@@ -23,9 +23,6 @@ typedef struct chunk {
 static chunk * freed_chunks = 0;
 static chunk * available_chunks = 0;
 
-static const unsigned smallest = 12;
-static const unsigned largest = 34;
-
 void inter_map_exception( const char *string )
 {
   for (;;) { asm ( "svc 4\n\tsvc 2" : : "r" (string) ); }

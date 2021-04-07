@@ -5,7 +5,7 @@
 #endif
 
 #ifndef STACK_SIZE
-#define STACK_SIZE 64
+#define STACK_SIZE 128
 #endif
 #define STACK_SIZE_STRINGX(s) #s
 #define STACK_SIZE_STRING(s) STACK_SIZE_STRINGX(s)

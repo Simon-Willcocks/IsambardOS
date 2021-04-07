@@ -1175,13 +1175,24 @@ static inline thread_switch SEL1_LOWER_AARCH64_SYNC_CODE_may_change_map( Core *c
     switch (esr >> 26) { // D7-2254 ARM DDI 0487B.a
     case 0b100000: // Instruction Abort from a lower Exception level.
       {
-        if (!find_and_map_memory( core, thread, fault_address() )) { BSOD( __COUNTER__ ); }
-      }
+        if (!find_and_map_memory( core, thread, fault_address() )) { // BSOD( __COUNTER__ ); }
+asm ( "mrs x20, elr_el1" );
+asm ( "mrs x21, far_el1" );
+asm ( "mrs x22, esr_el1" );
+asm ( "mov x23, #0x20" );
+        BSOD( __COUNTER__ ); // Instruction
+}
       return result;
-      break;
+      }
     case 0b100100: // Data Abort from a lower Exception level.
       {
-        if (!find_and_map_memory( core, thread, fault_address() )) { BSOD( __COUNTER__ ); }
+        if (!find_and_map_memory( core, thread, fault_address() )) { // BSOD( __COUNTER__ ); }
+asm ( "mrs x20, elr_el1" );
+asm ( "mrs x21, far_el1" );
+asm ( "mrs x22, esr_el1" );
+asm ( "mov x23, #0x24" );
+        BSOD( __COUNTER__ ); // Data
+}
 
         return result;
       }

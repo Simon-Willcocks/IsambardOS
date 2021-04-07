@@ -82,12 +82,12 @@ ISAMBARD_INTERFACE( FRAME_BUFFER )
 #include "interfaces/provider/FRAME_BUFFER.h"
 
 typedef fb_service_object *FB;
-ISAMBARD_STACK( fb_stack, 64 );
+ISAMBARD_STACK( fb_stack, 96 );
 uint64_t fb_lock = 0;
 
 ISAMBARD_FRAME_BUFFER__SERVER( FB )
 ISAMBARD_PROVIDER( FB, AS_FRAME_BUFFER( FB ) )
-ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( FB, RETURN_FUNCTIONS_FRAME_BUFFER( FB ), fb_lock, fb_stack, 64 * 8 )
+ISAMBARD_PROVIDER_SHARED_LOCK_AND_STACK( FB, RETURN_FUNCTIONS_FRAME_BUFFER( FB ), fb_lock, fb_stack, (96 * 8) )
 
 void expose_frame_buffer()
 {
