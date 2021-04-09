@@ -495,12 +495,24 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
      && interface->handler == System_Service_Map) {
       if (thread->regs[1] == DRIVER_SYSTEM_physical_address_of) {
         // This is the simplest and quickest method, and can't be done at el0
+        // Note: It fails for non-writable addresses. Is that right?
         uint64_t pa;
         asm volatile ( "\tAT S1E0W, %[va]"
                      "\n\tmrs %[pa], PAR_EL1"
                        : [pa] "=r" (pa)
                        : [va] "r" (thread->regs[2]) );
-        if (0 != (pa & 1)) { BSOD( __COUNTER__ ); }
+        if (0 != (pa & 1)) {
+          if (find_and_map_memory( core, thread, thread->regs[2] )) {
+// FIXME This doesn't seem to walk the table
+            asm volatile ( "\tAT S1E0W, %[va]"
+                         "\n\tmrs %[pa], PAR_EL1"
+                           : [pa] "=r" (pa)
+                           : [va] "r" (thread->regs[2]) );
+            if (0 != (pa & 1)) { BSOD( __COUNTER__ ); } // Physical address of memory not mapped
+          } else {
+            BSOD( __COUNTER__ ); // Physical address of memory not mapped
+          }
+        }
         thread->regs[0] = (pa & 0x000ffffffffff000ull) | (thread->regs[2] & 0xfff);
 
         return result;

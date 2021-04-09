@@ -145,7 +145,7 @@ extern struct __attribute__(( packed )) {
     uint32_t unused[1024-7];
   } system_timer;
 
-  union {
+  union DMA {
     uint32_t sizer[0x100/4];
     struct {
       uint32_t CS;
@@ -179,6 +179,7 @@ extern void mailbox_interrupt();
 extern void expose_gpu_mailbox();
 extern void expose_frame_buffer();
 extern void expose_emmc();
+extern void expose_dma();
 
 extern void mailbox_tag_request( uint32_t *request );
 

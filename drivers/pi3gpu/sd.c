@@ -817,8 +817,9 @@ void expose_emmc()
 {
   if (!current_device_bits_match()) return; // Should be calculated at compile time
 
+  tnd = TRIVIAL_NUMERIC_DISPLAY__get_service( "Trivial Numeric Display", -1 );
   debug_progress = 0x11;
-  start_show_page_thread();
+  //start_show_page_thread();
   debug_progress = 0x33;
 
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 900 ), N( 10 ), N( this_thread ), N( 0xfff0f0f0 ) );
@@ -898,7 +899,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 10 ), N( source_pa ), N
   // It looks like the GPU still only sees 1GB, aliased at 0x00000000, 0x40000000, 0x80000000, and 0xc0000000.
   // Experimentally, DMA from the 0 alias contains zero bytes, not what was loaded from the SD card on boot.
   // From the 4 alias gets the correct data, but only every second destination 64-bit word is filled
-  dma_cntrl.SOURCE_AD = source_pa | 0x40000000; // 0xc0000000 | 0x3f300020; // devices.emmc.DATA Unchached bus address?
+  dma_cntrl.SOURCE_AD = source_pa | 0x80000000; // 0xc0000000 | 0x3f300020; // devices.emmc.DATA Unchached bus address?
   dma_cntrl.DEST_AD = start_pa;
   dma_cntrl.TXFR_LEN = size;
   dma_cntrl.STRIDE = 0;

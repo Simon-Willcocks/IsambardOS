@@ -621,6 +621,7 @@ static bool find_and_map_memory( Core *core, thread_context *thread, uint64_t fa
   }
   VirtualMemoryBlock *vmb = find_vmb( thread, fa );
   if (vmb == 0) {
+    asm ( "smc 3" );
     asm ( "mov %0, %0\nwfi" : : "r" (fa) );
     // Throw unnamed exception FIXME
     // i.e. set spsr V flag, and resume?
@@ -672,7 +673,6 @@ static bool find_and_map_memory( Core *core, thread_context *thread, uint64_t fa
 
       entry = with_physical_memory_attrs( entry, cmb );
       entry = with_virtual_memory_attrs( entry, vmb );
-      asm volatile ( "" : : "r" (vmb), "r" (cmb), "r" (entry_location), "r" (fa), "r" (physical_memory_start + ((fa - virtual_memory_start) & (-1ull << level3_lsb))) );
       *entry_location = entry;
 
       return true;
@@ -1190,7 +1190,8 @@ asm ( "mov x23, #0x20" );
 asm ( "mrs x20, elr_el1" );
 asm ( "mrs x21, far_el1" );
 asm ( "mrs x22, esr_el1" );
-asm ( "mov x23, #0x24" );
+asm ( "mrs x25, ttbr0_el1" );
+asm ( "mov x26, #0x24" );
         BSOD( __COUNTER__ ); // Data
 }
 

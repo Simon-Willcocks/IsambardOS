@@ -398,11 +398,14 @@ void showme()
   led_blink( 0x3f200000, 3 );
   for (;;) {
     showregs();
-    uint32_t *page = (void*) 0x3b000;
+    uint32_t *pages[] = { (void*) 0x3b000, (void*) 0x1a000,(void*) 0x19000,(void*) 0x18000, (void*)0 };
+    int j = 0;
     for (;;) {
-show_page( page );
-    for (uint64_t i = 0; i < LED_BLINK_TIME * 40; i++) { asm volatile ( "" ); }
-}
+      show_page( pages[j] );
+      for (uint64_t i = 0; i < LED_BLINK_TIME * 40; i++) { asm volatile ( "" ); }
+      j++;
+      if (pages[j] == 0) j = 0;
+    }
 
     for (uint64_t i = 0; i < 0x30000; i+= 0x1000)
     {

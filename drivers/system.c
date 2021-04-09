@@ -525,7 +525,7 @@ void __attribute__(( noreturn )) idle_thread_entry( Object system_interface,
 
     board_initialise();
 
-  Isambard_20( memory_manager, 0, allocatable_memory_base, 512 * 1024 * 1024 ); // Initialise
+  Isambard_20( memory_manager, 0, allocatable_memory_base, 256 * 1024 * 1024 ); // Initialise
 
   allocatable_memory_top = 512 * 1024 * 1024;
     board_initialised = true;

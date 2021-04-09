@@ -98,6 +98,21 @@ void trapper()
   asm ( "brk 6" );
 }
 
+static void identify_available_memory()
+{
+  uint32_t __attribute__(( aligned( 16 ) )) request[8] =
+            { sizeof( request ), 0,
+              0x00010005, 8, 0, 0, 0,
+              0 };
+
+  mailbox_tag_request( request );
+
+  if (request[1] != 0x80000000 || request[4] != 0x80000008) {
+    asm ( "brk 1" );
+  }
+  DRIVER_SYSTEM__set_memory_top( driver_system(), NUMBER__from_integer_register( request[6] ) );
+}
+
 void entry()
 {
   static bool initialised = false;
@@ -130,27 +145,7 @@ void entry()
 
   expose_frame_buffer();
   expose_emmc();
-#if 0
-  sleep_ms( 20000 );
-
-  // Breaks some other things!
-  uint32_t *request = mapped_memory + 96;
-  request[0] = 8*4;
-  request[1] = 0;
-  request[2] = 0x00010005;
-  request[3] = 8;
-  request[4] = 0;
-  request[5] = 0;
-  request[6] = 0;
-  request[7] = 0;
-
-  mailbox_tag_request( request );
-
-  if (request[1] != 0x80000000 || request[4] != 0x80000008) {
-    asm ( "brk 1" );
-  }
-  //DRIVER_SYSTEM__set_memory_top( driver_system(), NUMBER__from_integer_register( request[6] ) );
-#endif
+  expose_dma();
 
   wait_until_woken();
 }
