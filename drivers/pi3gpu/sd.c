@@ -885,9 +885,9 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( 10 ), N( 0x22222222 ), 
     //      10987654321098765432109876543210
     //.TI = 0b00000100000000000000010000011001 | (11 << 16), // 
     .TI = 0b00000000000000000000010000111001 | (11 << 16) | (4 << 12), // Wide bursts, 4 words, SRC_DREQ, 128-bit writes, incrementing, wait for write responses, interrupt enabled. Peripheral 11 (e.mmc).
-    .SOURCE_AD = 0x7f300020,
+    .SOURCE_AD = 0x7e300020,
     .DEST_AD = start_pa,
-    .TXFR_LEN = 2560, // size,
+    .TXFR_LEN = 4, // 2560, // size,
     .STRIDE = 0,
     .NEXTCONBK = 0
   };
@@ -914,6 +914,9 @@ if ((request[5] & 1) == 0) {
   for (;;) {}  // Actually returns 7f35, so dma 0 is available...
 }
 }
+
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 900 ), N( (uint64_t) &devices.emmc.EXRDFIFO_CFG ), N( 0xff0000ff ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 900 ), N( (uint64_t) &devices.emmc.EXRDFIFO_EN ), N( 0xff0000ff ) );
 
   union DMA volatile *dma = &devices.dma[9];
 
