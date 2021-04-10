@@ -166,7 +166,7 @@ mapped_memory[40] = ((response[0] >> 9) & 0xf);
   }
 
   if (0 != (new_interrupts & ~0x00000033)) {
-    asm ( "brk 1" );
+    asm ( "mov x26, x0\n\tbrk 1" );
   }
 
   memory_read_barrier(); // Completed our reads of devices.emmc
@@ -838,6 +838,9 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 20 ), N( mapped_memory_
 
   if (!identify_device()) return;
 
+devices.emmc.EXRDFIFO_CFG = 3;
+devices.emmc.EXRDFIFO_EN = 1;
+
   debug_progress = 21;
   EMMC__BLOCK_DEVICE__register_service( "EMMC", &emmc_service_singleton );
   debug_progress = 22;
@@ -877,39 +880,20 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( 10 ), N( 0x22222222 ), 
     uint32_t TXFR_LEN;
     uint32_t STRIDE;
     uint32_t NEXTCONBK;
-  } __attribute__(( aligned( 32 ) )) dma_cntrl;
+  } __attribute__(( aligned( 32 ) )) dma_cntrl = {
+    //       3         2         1         0
+    //      10987654321098765432109876543210
+    //.TI = 0b00000100000000000000010000011001 | (11 << 16), // 
+    .TI = 0b00000000000000000000010000111001 | (11 << 16) | (4 << 12), // Wide bursts, 4 words, SRC_DREQ, 128-bit writes, incrementing, wait for write responses, interrupt enabled. Peripheral 11 (e.mmc).
+    .SOURCE_AD = 0x7f300020,
+    .DEST_AD = start_pa,
+    .TXFR_LEN = 2560, // size,
+    .STRIDE = 0,
+    .NEXTCONBK = 0
+  };
 
-  static uint64_t fake_source = 0x4343424274745252ull;
-  uint32_t source_pa = DRIVER_SYSTEM__physical_address_of( driver_system(), NUMBER__from_pointer( &fake_source ) ).r;
+  flush_and_invalidate_cache( &dma_cntrl, sizeof( dma_cntrl ) );
 
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 10 ), N( source_pa ), N( 0xfffff000 ) );
-  dma_cntrl.TI = ( 1 << 26) // Not wide bursts
-               | ( 0 << 21) // Waits
-               | ( 0 << 16) // Peripheral: None; not needed for AXI peripherals
-               | ( 0 << 12) // Burst Transfer Length
-               | ( 0 << 11) // Source ignore (zero) All fives?
-               | ( 0 << 10) // Use DREQ for source (0 => use AXI bus?)
-               | ( 0 <<  9) // Src width 0 = 32bit, 1 = 128 bit
-               | ( 0 <<  8) // Src increment (4 or 32 bytes)
-               | ( 0 <<  5) // Destination width  0 = 32bit, 1 = 128 bit
-               | ( 1 <<  4) // Destination increment
-               | ( 1 <<  3) // Wait for AXI write responses
-               | ( 0 <<  1) // 2D Mode
-               | ( 1 <<  0);// Interrupt enable
-  // It looks like the GPU still only sees 1GB, aliased at 0x00000000, 0x40000000, 0x80000000, and 0xc0000000.
-  // Experimentally, DMA from the 0 alias contains zero bytes, not what was loaded from the SD card on boot.
-  // From the 4 alias gets the correct data, but only every second destination 64-bit word is filled
-  dma_cntrl.SOURCE_AD = source_pa | 0x80000000; // 0xc0000000 | 0x3f300020; // devices.emmc.DATA Unchached bus address?
-  dma_cntrl.DEST_AD = start_pa;
-  dma_cntrl.TXFR_LEN = size;
-  dma_cntrl.STRIDE = 0;
-  dma_cntrl.NEXTCONBK = 0;
-  uint32_t cs = ( 1 << 28) // Wait for remaining writes (over AXI bus)
-              | ( 1 <<  4) // Destination increment
-;
-  NUMBER pa = DRIVER_SYSTEM__physical_address_of( driver_system(),
-                NUMBER__from_pointer( &dma_cntrl ) );
-  flush_and_invalidate_cache( (void*) &dma_cntrl, sizeof( dma_cntrl ) );
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 50 ), N( dma_cntrl.TI ), N( 0xffff00ff ) );
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 60 ), N( dma_cntrl.SOURCE_AD ), N( 0xffff00ff ) );
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 70 ), N( dma_cntrl.DEST_AD ), N( 0xffff00ff ) );
@@ -931,10 +915,12 @@ if ((request[5] & 1) == 0) {
 }
 }
 
+  union DMA volatile *dma = &devices.dma[9];
+
 uint32_t int_status = devices.dmactl.INT_STATUS;
 uint32_t int_enable = devices.dmactl.ENABLE;
-uint32_t control = devices.dma[0].CS;
-uint32_t remaining = devices.dma[0].TXFR_LEN;
+uint32_t control = dma->CS;
+uint32_t remaining = dma->TXFR_LEN;
   memory_read_barrier();
 
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 50 ), N( int_status ), N( 0xffff00ff ) );
@@ -943,13 +929,16 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 70 ), N( control ), N( 
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 80 ), N( remaining ), N( 0xffff00ff ) );
 
   memory_write_barrier(); // About to write to devices.dma
-  devices.dma[0].CONBLK_AD = pa.r;
-  devices.dma[0].CS = 1;
+  dma->CONBLK_AD = DRIVER_SYSTEM__physical_address_of( driver_system(), NUMBER__from_pointer( &dma_cntrl ) ).r;
+
+asm ( "svc 0" );
+sleep_ms( 3000 );
+  dma->CS = 1;
 
 int_status = devices.dmactl.INT_STATUS;
 int_enable = devices.dmactl.ENABLE;
-control = devices.dma[0].CS;
-remaining = devices.dma[0].TXFR_LEN;
+control = dma->CS;
+remaining = dma->TXFR_LEN;
   memory_read_barrier();
 
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 50 ), N( int_status ), N( 0xffff00ff ) );
@@ -961,6 +950,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 80 ), N( remaining ), N
   // Kick off transfer for the DMA to put into memory
   memory_write_barrier(); // About to write to devices.emmc
   devices.emmc.BLKSIZECNT = ((size / 512) << 16) | 512; // blocks of 512 bytes
+devices.emmc.BLKSIZECNT = (8 << 16) | 512; // blocks of 512 bytes
 
   data_thread = this_thread;
 
@@ -970,10 +960,10 @@ int y = 140;
 do {
 int_status = devices.dmactl.INT_STATUS;
 int_enable = devices.dmactl.ENABLE;
-control = devices.dma[0].CS;
-remaining = devices.dma[0].TXFR_LEN;
-uint32_t src = devices.dma[0].SOURCE_AD;
-uint32_t dst = devices.dma[0].DEST_AD;
+control = dma->CS;
+remaining = dma->TXFR_LEN;
+uint32_t src = dma->SOURCE_AD;
+uint32_t dst = dma->DEST_AD;
   memory_read_barrier();
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 50 ), N( int_status ), N( 0xffff00ff ) );
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 60 ), N( int_enable ), N( 0xffff00ff ) );
@@ -988,7 +978,11 @@ asm ("svc 0" );
 sleep_ms( 1 );
 } while ((control & 2) == 0);
 
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 500 ), N( 0xfeedfeed ), N( 0xffff00ff ) );
+asm ("svc 0" );
   // wait_until_woken(); // As data thread
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 500 ), N( 0xfeedf00d ), N( 0xffff00ff ) );
+asm ("svc 0" );
 
   // if (block_index != size/4) {
     // EMMC__exception( 0 );

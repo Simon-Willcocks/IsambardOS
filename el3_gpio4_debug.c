@@ -398,7 +398,8 @@ void showme()
   led_blink( 0x3f200000, 3 );
   for (;;) {
     showregs();
-    uint32_t *pages[] = { (void*) 0x3b000, (void*) 0x1a000,(void*) 0x19000,(void*) 0x18000, (void*)0 };
+    uint32_t *pages[] = { // (void*) 0x3b000, (void*) 0x1a000,(void*) 0x19000,(void*) 0x18000,
+               (void*) 0x04000000, (void*)0 };
     int j = 0;
     for (;;) {
       show_page( pages[j] );
