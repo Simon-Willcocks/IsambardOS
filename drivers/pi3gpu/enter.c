@@ -119,6 +119,7 @@ void entry()
   if (initialised) for (;;) {}
   initialised = true;
 
+  // These physical addresses are ARM addresses, the bus addresses are still 0x7e...
   map_page( 0x3f00b000, (void*) &devices.unused1 );
   map_page( 0x3f300000, (void*) &devices.emmc );
   map_page( 0x3f200000, (void*) &devices.gpio );

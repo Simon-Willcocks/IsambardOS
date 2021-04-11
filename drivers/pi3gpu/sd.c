@@ -839,7 +839,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 20 ), N( mapped_memory_
   if (!identify_device()) return;
 
 devices.emmc.EXRDFIFO_CFG = 3;
-devices.emmc.EXRDFIFO_EN = 1;
+devices.emmc.EXRDFIFO_EN = 1; // Disabled for un-paced transfers
 
   debug_progress = 21;
   EMMC__BLOCK_DEVICE__register_service( "EMMC", &emmc_service_singleton );
@@ -883,11 +883,14 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( 10 ), N( 0x22222222 ), 
   } __attribute__(( aligned( 32 ) )) dma_cntrl = {
     //       3         2         1         0
     //      10987654321098765432109876543210
-    //.TI = 0b00000100000000000000010000011001 | (11 << 16), // 
-    .TI = 0b00000000000000000000010000111001 | (11 << 16) | (4 << 12), // Wide bursts, 4 words, SRC_DREQ, 128-bit writes, incrementing, wait for write responses, interrupt enabled. Peripheral 11 (e.mmc).
-    .SOURCE_AD = 0x7e300020,
+    .TI = 0b00000100000000000000010000011001 | (11 << 16), // Data Req, 32-bit source, no inc., 32-bit destination, Wait for write responses, interrupt enable (which will be ignored) Paced transfer (DREQ), e.mmc
+    // .TI = 0b00000000000000000000010000011001, // Data Req, 32-bit source, no inc., 32-bit destination, Wait for write responses, interrupt enable (which will be ignored)
+    //.TI = 0b00000000000000000000010000111001 | (11 << 16) | (4 << 12), // Wide bursts, 4 words, SRC_DREQ, 128-bit writes, incrementing, wait for write responses, interrupt enabled. Peripheral 11 (e.mmc).
+    // Bus addresses of peripherals are unchanged from original bcm2835 documentation, although they are visible
+    // at different addresses in pi3. Correcting for that...
+    .SOURCE_AD = 0x40000000 | (~0xc1000000 & DRIVER_SYSTEM__physical_address_of( driver_system(), NUMBER__from_pointer( &devices.emmc.DATA ) ).r),
     .DEST_AD = start_pa,
-    .TXFR_LEN = 4, // 2560, // size,
+    .TXFR_LEN = 2560, // size,
     .STRIDE = 0,
     .NEXTCONBK = 0
   };
@@ -953,7 +956,6 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 80 ), N( remaining ), N
   // Kick off transfer for the DMA to put into memory
   memory_write_barrier(); // About to write to devices.emmc
   devices.emmc.BLKSIZECNT = ((size / 512) << 16) | 512; // blocks of 512 bytes
-devices.emmc.BLKSIZECNT = (8 << 16) | 512; // blocks of 512 bytes
 
   data_thread = this_thread;
 
@@ -978,7 +980,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( y ), N( src ), N( 0xfff
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( y ), N( dst ), N( 0xffff00ff ) );
 y += 10;
 asm ("svc 0" );
-sleep_ms( 1 );
+sleep_ms( 5 );
 } while ((control & 2) == 0);
 
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 500 ), N( 0xfeedfeed ), N( 0xffff00ff ) );
