@@ -890,7 +890,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( 10 ), N( 0x22222222 ), 
     // at different addresses in pi3. Correcting for that...
     .SOURCE_AD = 0x40000000 | (~0xc1000000 & DRIVER_SYSTEM__physical_address_of( driver_system(), NUMBER__from_pointer( &devices.emmc.DATA ) ).r),
     .DEST_AD = start_pa,
-    .TXFR_LEN = 2560, // size,
+    .TXFR_LEN = 0x9000, // size,
     .STRIDE = 0,
     .NEXTCONBK = 0
   };
