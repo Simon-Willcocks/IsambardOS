@@ -838,7 +838,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 20 ), N( mapped_memory_
 
   if (!identify_device()) return;
 
-devices.emmc.EXRDFIFO_CFG = 3;
+devices.emmc.EXRDFIFO_CFG = 0;
 devices.emmc.EXRDFIFO_EN = 1; // Disabled for un-paced transfers
 
   debug_progress = 21;
@@ -890,7 +890,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( 10 ), N( 0x22222222 ), 
     // at different addresses in pi3. Correcting for that...
     .SOURCE_AD = 0x40000000 | (~0xc1000000 & DRIVER_SYSTEM__physical_address_of( driver_system(), NUMBER__from_pointer( &devices.emmc.DATA ) ).r),
     .DEST_AD = start_pa,
-    .TXFR_LEN = 0x9000, // size,
+    .TXFR_LEN = size,
     .STRIDE = 0,
     .NEXTCONBK = 0
   };
@@ -921,7 +921,7 @@ if ((request[5] & 1) == 0) {
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 900 ), N( (uint64_t) &devices.emmc.EXRDFIFO_CFG ), N( 0xff0000ff ) );
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 900 ), N( (uint64_t) &devices.emmc.EXRDFIFO_EN ), N( 0xff0000ff ) );
 
-  union DMA volatile *dma = &devices.dma[9];
+  union DMA volatile *dma = &devices.dma[0];
 
 uint32_t int_status = devices.dmactl.INT_STATUS;
 uint32_t int_enable = devices.dmactl.ENABLE;
@@ -939,7 +939,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 80 ), N( remaining ), N
 
 asm ( "svc 0" );
 sleep_ms( 3000 );
-  dma->CS = 1;
+  dma->CS = (1 << 28) | 1;
 
 int_status = devices.dmactl.INT_STATUS;
 int_enable = devices.dmactl.ENABLE;
@@ -962,7 +962,15 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 80 ), N( remaining ), N
   command( 18, first_block.r );
 
 int y = 140;
+uint32_t old_remaining = 0;
+uint32_t colour = 0xffff00ff;
 do {
+if (old_remaining == remaining) {
+  colour = 0xffff0000;
+  sleep_ms( 200 );
+}
+else colour = 0xffff00ff;
+old_remaining = remaining;
 int_status = devices.dmactl.INT_STATUS;
 int_enable = devices.dmactl.ENABLE;
 control = dma->CS;
@@ -970,23 +978,24 @@ remaining = dma->TXFR_LEN;
 uint32_t src = dma->SOURCE_AD;
 uint32_t dst = dma->DEST_AD;
   memory_read_barrier();
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 50 ), N( int_status ), N( 0xffff00ff ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 60 ), N( int_enable ), N( 0xffff00ff ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 70 ), N( control ), N( 0xffff00ff ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 50 ), N( int_status ), N( colour ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 60 ), N( int_enable ), N( colour ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 70 ), N( control ), N( colour ) );
 
 if (y > 760) y = 140;
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( y ), N( remaining ), N( 0xffff00ff ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( y ), N( src ), N( 0xffff00ff ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( y ), N( dst ), N( 0xffff00ff ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( y ), N( control ), N( colour ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( y ), N( remaining ), N( colour ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( y ), N( src ), N( colour ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( y ), N( dst ), N( colour ) );
 y += 10;
 asm ("svc 0" );
-sleep_ms( 5 );
+sleep_ms( 25 );
 } while ((control & 2) == 0);
 
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 500 ), N( 0xfeedfeed ), N( 0xffff00ff ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 500 ), N( 0xfeedfeed ), N( colour ) );
 asm ("svc 0" );
   // wait_until_woken(); // As data thread
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 500 ), N( 0xfeedf00d ), N( 0xffff00ff ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1600 ), N( 500 ), N( 0xfeedf00d ), N( colour ) );
 asm ("svc 0" );
 
   // if (block_index != size/4) {
