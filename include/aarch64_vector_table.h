@@ -28,6 +28,7 @@
 #error "Please define AARCH64_VECTOR_TABLE_NAME - the name you want for the table"
 #endif
 
+#ifndef AARCH64_VECTOR_TABLE_NEVER_SP0
 #ifndef AARCH64_VECTOR_TABLE_SP0_SYNC_CODE
 #error "Please define AARCH64_VECTOR_TABLE_SP0_SYNC_CODE"
 #endif
@@ -42,6 +43,7 @@
 
 #ifndef AARCH64_VECTOR_TABLE_SP0_SERROR_CODE
 #error "Please define AARCH64_VECTOR_TABLE_SP0_SERROR_CODE"
+#endif
 #endif
 
 #ifndef AARCH64_VECTOR_TABLE_SPX_SYNC_CODE
@@ -99,10 +101,10 @@
   asm volatile ( "\t.balign 0x80\n\t"MACRO_AS_STRING( AARCH64_VECTOR_TABLE_NAME ) "_" #event ":" ); \
   AARCH64_VECTOR_TABLE_##event##_CODE \
   asm volatile ( ".ifeq . - "MACRO_AS_STRING( AARCH64_VECTOR_TABLE_NAME ) "_" #event \
-               "\n\t.error AARCH64_VECTOR_TABLE_" #event "_CODE too short (0 instructions)" \
+               "\n\t.error \"AARCH64_VECTOR_TABLE_" #event "_CODE too short (0 instructions)\"" \
 	       "\n.endif" ); \
   asm volatile ( ".ifgt . - "MACRO_AS_STRING( AARCH64_VECTOR_TABLE_NAME ) "_" #event " - 0x80" \
-               "\n\t.error AARCH64_VECTOR_TABLE_" #event "_CODE too long (over 32 instructions)" \
+               "\n\t.error \"AARCH64_VECTOR_TABLE_" #event "_CODE too long (over 32 instructions)\"" \
 	       "\n.endif" )
 
 void __attribute__(( noreturn, aligned( 0x800 ) )) AARCH64_VECTOR_TABLE_NAME()
@@ -111,10 +113,26 @@ void __attribute__(( noreturn, aligned( 0x800 ) )) AARCH64_VECTOR_TABLE_NAME()
                "\n\t.error \"Table not starting on 2k boundary, check compiler options!\""
 	       "\n.endif" );
 
+#ifndef AARCH64_VECTOR_TABLE_NEVER_SP0
   AARCH64_VECTOR_TABLE_EXPAND_CODE( SP0_SYNC );
   AARCH64_VECTOR_TABLE_EXPAND_CODE( SP0_IRQ );
   AARCH64_VECTOR_TABLE_EXPAND_CODE( SP0_FIQ );
   AARCH64_VECTOR_TABLE_EXPAND_CODE( SP0_SERROR );
+#else
+  asm volatile ( MACRO_AS_STRING( AARCH64_VECTOR_TABLE_NAME ) "_NO_SP0:" );
+#ifdef AARCH64_VECTOR_TABLE_NEVER_SP0_CODE
+  AARCH64_VECTOR_TABLE_NEVER_SP0_CODE
+#else
+  asm volatile ( "nop" );
+#endif
+  asm volatile ( ".ifeq . - "MACRO_AS_STRING( AARCH64_VECTOR_TABLE_NAME ) "_NO_SP0"
+               "\n\t.error \"AARCH64_VECTOR_TABLE_NO_SP0_CODE too short (0 instructions)\""
+	       "\n.endif" );
+  asm volatile ( ".ifgt . - "MACRO_AS_STRING( AARCH64_VECTOR_TABLE_NAME ) "_NO_SP0 - 0x200"
+               "\n\t.error \"AARCH64_VECTOR_TABLE_NO_SP_CODE too long (over 128 instructions)\""
+	       "\n.endif" );
+  asm volatile ( "\t.balign 0x200\n\t" );
+#endif
   AARCH64_VECTOR_TABLE_EXPAND_CODE( SPX_SYNC );
   AARCH64_VECTOR_TABLE_EXPAND_CODE( SPX_IRQ );
   AARCH64_VECTOR_TABLE_EXPAND_CODE( SPX_FIQ );
