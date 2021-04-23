@@ -376,7 +376,15 @@ void c_bsod();
 
 #define get_system_reg( name, value ) asm ( "mrs %[v], "#name : [v] "=&r" (value) )
 #define set_system_reg( name, value ) asm ( "msr "#name", %[v]" : : [v] "r" (value) )
-#define modify_system_reg( name, bits, set ) asm ( "mrs x4, "#name"\nbic x4, x4, %[b]\norr x4, x4, %[s]\nmsr "#name", x4" : : [b] "r" (bits), [s] "r" (set) : "x4" )
+
+#define modify_system_reg( name, bits, set ) asm ( "mrs x4, "#name \
+                                                 "\nbic x4, x4, %[b]" \
+                                                 "\norr x4, x4, %[s]" \
+                                                 "\nmsr "#name", x4" \
+                                                 : \
+                                                 : [b] "r" (bits) \
+                                                 , [s] "r" (set) \
+                                                 : "x4" )
 
 void example_a64();
 // SVC handling not supported (by me, not the processor)
