@@ -590,6 +590,7 @@ void c_bsod()
       set_system_reg( sp_el1, 0x300000 );
       set_system_reg( sp_el0, 0x400000 );
       modify_system_reg( scr_el3, 1, 1 ); // Set NS bit
+      modify_system_reg( scr_el3, 0xe37, 0xe37 ); // Set as Isambard...
       modify_system_reg( hcr_el2, (1 << 31) | 1, (0 << 31) | 1 ); // Clear RW (32-bit) Set VM
       done = 1; started = 1;
     }
