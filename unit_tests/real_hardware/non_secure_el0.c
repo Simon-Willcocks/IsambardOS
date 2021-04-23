@@ -542,7 +542,7 @@ void c_bsod()
       set_system_reg( sp_el1, 0x300000 );
       set_system_reg( sp_el0, 0x400000 );
       modify_system_reg( scr_el3, 1, 1 ); // Set NS bit
-      modify_system_reg( hcr_el2, (1 << 31), (1 << 31) ); // Set RW (32-bit)
+      modify_system_reg( hcr_el2, (1 << 31), (0 << 31) ); // Clear RW (32-bit)
       done = 1; started = 1;
       // Drop to EL2 before dropping to 32-bit SVC (doesn't help!)
       extern void an_eret();
