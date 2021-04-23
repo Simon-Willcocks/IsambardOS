@@ -576,6 +576,21 @@ void c_bsod()
     static int done = 0;
     if (!started && !done)
     {
+      set_system_reg( elr_el3, example_a64 );
+      set_system_reg( spsr_el3, EL0t );
+      set_system_reg( sp_el2, 0x200000 );
+      set_system_reg( sp_el1, 0x300000 );
+      set_system_reg( sp_el0, 0x400000 );
+      modify_system_reg( scr_el3, 1, 1 ); // Set NS bit
+      modify_system_reg( hcr_el2, (1 << 31), (1 << 31) ); // Set RW (64-bit)
+      done = 1; started = 1;
+    }
+  }
+
+  {
+    static int done = 0;
+    if (!started && !done)
+    {
       set_system_reg( elr_el3, example_a32 );
       set_system_reg( spsr_el3, M32_User );
       set_system_reg( sp_el2, 0x200000 );
