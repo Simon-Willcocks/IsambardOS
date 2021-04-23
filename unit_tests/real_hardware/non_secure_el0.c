@@ -379,7 +379,7 @@ void c_bsod();
 #define modify_system_reg( name, bits, set ) asm ( "mrs x4, "#name"\nbic x4, x4, %[b]\norr x4, x4, %[s]\nmsr "#name", x4" : : [b] "r" (bits), [s] "r" (set) : "x4" )
 
 void example_a64();
-uint32_t example_a32[] = { 0xe1600072, 0xeafffffe }; // smc 2, Infinite loop
+uint32_t example_a32[] = { 0xef000020, 0xe1600072, 0xeafffffe }; // svc 32, smc 2 (jumps to EL3), Infinite loop
 
 void show_regs( int x )
 {
