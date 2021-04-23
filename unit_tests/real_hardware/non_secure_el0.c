@@ -379,7 +379,8 @@ void c_bsod();
 #define modify_system_reg( name, bits, set ) asm ( "mrs x4, "#name"\nbic x4, x4, %[b]\norr x4, x4, %[s]\nmsr "#name", x4" : : [b] "r" (bits), [s] "r" (set) : "x4" )
 
 void example_a64();
-uint32_t example_a32[] = { 0xef000020, 0xe1600072, 0xeafffffe }; // svc 32, smc 2 (jumps to EL3), Infinite loop
+// SVC handling not supported (by me, not the processor)
+uint32_t example_a32[] = { /* 0xef000020,*/ 0xe1600072, 0xeafffffe }; // (svc 32), smc 2 (jumps to EL3), Infinite loop
 
 void show_regs( int x )
 {
@@ -553,6 +554,36 @@ void c_bsod()
       // This eret drops to EL2 at the location of the eret, which 
       // then drops to the lower level
       asm ( "an_eret: eret" );
+    }
+  }
+
+  {
+    static int done = 0;
+    if (!started && !done)
+    {
+      set_system_reg( elr_el3, example_a32 );
+      set_system_reg( spsr_el3, M32_Svc );
+      set_system_reg( sp_el2, 0x200000 );
+      set_system_reg( sp_el1, 0x300000 );
+      set_system_reg( sp_el0, 0x400000 );
+      modify_system_reg( scr_el3, 1, 1 ); // Set NS bit
+      modify_system_reg( hcr_el2, (1 << 31), (0 << 31) ); // Clear RW (32-bit)
+      done = 1; started = 1;
+    }
+  }
+
+  {
+    static int done = 0;
+    if (!started && !done)
+    {
+      set_system_reg( elr_el3, example_a32 );
+      set_system_reg( spsr_el3, M32_User );
+      set_system_reg( sp_el2, 0x200000 );
+      set_system_reg( sp_el1, 0x300000 );
+      set_system_reg( sp_el0, 0x400000 );
+      modify_system_reg( scr_el3, 1, 1 ); // Set NS bit
+      modify_system_reg( hcr_el2, (1 << 31), (0 << 31) ); // Clear RW (32-bit)
+      done = 1; started = 1;
     }
   }
 
