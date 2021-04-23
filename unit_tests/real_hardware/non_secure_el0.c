@@ -532,7 +532,7 @@ void c_bsod()
     }
   }
 
-  // if (!works)
+  if (!works)
   {
     static int done = 0;
     if (!started && !done)
