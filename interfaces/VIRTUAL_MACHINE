@@ -1,0 +1,14 @@
+
+interface VIRTUAL_MACHINE_MANAGER
+  create_vm OUT machine: VIRTUAL_MACHINE
+end
+
+interface VIRTUAL_MACHINE
+  set_vttbr_el2 IN vttbr: NUMBER 
+  set_hcr_el2 IN hcr: NUMBER 
+  set_hstr_el2 IN hstr: NUMBER 
+  set_vmpidr_el2 IN vmpidr: NUMBER 
+  set_vpidr_el2 IN vpidr: NUMBER 
+  set_vtcr_el2 IN vtcr: NUMBER 
+end
+
