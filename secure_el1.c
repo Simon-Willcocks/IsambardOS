@@ -15,14 +15,36 @@ static const interface_index system_map_index = 1;
 static const interface_index memory_allocator_map_index = 2;
 static const unsigned number_of_system_maps = 2;
 
+uint64_t VTTBR_EL2 = 0;
+
 // build.sh generated:
 #include "drivers_info.h"
 
-extern void _start(); // For the PC-relative address of the start of the code
+#include "kernel_translation_tables.h"
 
-// Too lazy to create a two line include file...
-void initialise_shared_isambard_kernel_tables( Core *core0, int cores );
-void set_asid( Core *core, uint64_t asid );
+void VBAR_SEL1();
+
+vm_state __attribute__(( aligned( 16 ) )) vm[2] = {
+    {
+      .cntkctl_el1 = 0b1100000011, // ARM DDI 0487C.a D10-2942
+      .mair_el1 = Aarch64_VMSA_Isambard_memory_attributes,
+      .sctlr_el1 = 0,     // Set in switch_to_running_in_high_memory
+      .tcr_el1 = 0,       // Set in switch_to_running_in_high_memory
+      .ttbr1_el1 = 0,     // Set in switch_to_running_in_high_memory
+      // .ttbr0_el1 = 0, core-specific
+      .vbar_el1 = (uint64_t) VBAR_SEL1
+    },
+    {
+      .vttbr_el2 = 0,
+      .hcr_el2 = 0x00000003ull, // 32-bit EL0&1, VM, no nesting
+      .hstr_el2 = 0xffff,       // Hypervisor System Trap Register
+      .vmpidr_el2 = 0xc0000000, // Virtualization Multiprocessor ID Register
+      .vpidr_el2 = 0x410fc075,  // Pi2, according to qemu
+      .sctlr_el1 = 0xd50070,    //  ditto, except clearing SP alignment check bit
+      .vtcr_el2 = 0x800080f22   // t0sz = 34 (1GB), SL0 = 0, IRGN0, ORGN0 = 0, TG0 = 0 (4k), PS = 0 (4GB), VS=1 (16-bit)
+    } };
+
+extern void _start(); // For the PC-relative address of the start of the code
 
 // w18 contains a thread code, locks may contain two thread codes
 // Valid thread codes are non-zero.
@@ -43,8 +65,6 @@ DEFINE_DOUBLE_LINKED_LIST( thread, thread_context, next, prev, list );
 
 #define BSOD_TOSTRING( n ) #n
 #define BSOD( n ) asm ( "0: smc " BSOD_TOSTRING( n ) "\n\tb 0b" );
-
-extern uint8_t virtual_stack_offset;
 
 static inline
 uint32_t __attribute__(( always_inline )) core_number()
@@ -94,7 +114,7 @@ static void invalidate_cache( uint8_t code )
     );
 }
 
-static void invalidate_all_caches()
+void invalidate_all_caches()
 {
   invalidate_cache( 0 );
   invalidate_cache( 2 ); // The GPU does not see changes, without this.
@@ -114,20 +134,9 @@ static uint64_t phys_addr( void *kernel_addr )
   return ((uint8_t*) kernel_addr) - start;
 }
 
-#define AARCH64_VECTOR_TABLE_NAME VBAR_EL1
+#define AARCH64_VECTOR_TABLE_NAME VBAR_SEL1
 #define AARCH64_VECTOR_TABLE_PREFIX SEL1_
 #define HANDLER_EL 1
-
-#if 0
-#define NEVER_HAPPENS BSOD( 0 )
-
-// #define AARCH64_VECTOR_TABLE_SP0_SYNC_CODE NEVER_HAPPENS
-#define AARCH64_VECTOR_TABLE_SP0_SERROR_CODE NEVER_HAPPENS
-#define AARCH64_VECTOR_TABLE_SP0_IRQ_CODE NEVER_HAPPENS
-#define AARCH64_VECTOR_TABLE_SPX_SYNC_CODE NEVER_HAPPENS
-#define AARCH64_VECTOR_TABLE_SPX_SERROR_CODE NEVER_HAPPENS
-#define AARCH64_VECTOR_TABLE_SPX_IRQ_CODE NEVER_HAPPENS
-#endif
 
 #include "aarch64_c_vector_table.h"
 
@@ -169,6 +178,8 @@ static void initialise_system_map()
 }
 
 int no_zero_bsod = __COUNTER__;
+int no_one_bsod = __COUNTER__;
+int no_two_bsod = __COUNTER__;
 
 // The following variables are offsets into the kernel's working memory, so
 // that that memory can be located in low (EL2,3) or high (EL1) virtual memory.
@@ -356,8 +367,7 @@ static Interface *obtain_interface()
 void initialise_new_thread( thread_context *thread )
 {
   for (int i = 0; i < 31; i++) {
-    thread->regs[i] = i * 0x0100000000000000ull;
-    thread->regs[i] |= (0xfffffff & (uint64_t) thread);
+    thread->regs[i] = ((0xffffff & (uint64_t) thread) << 8) + i;
   }
 
   // No longer free, must always be in a linked list
@@ -689,8 +699,6 @@ static bool find_and_map_memory( Core *core, thread_context *thread, uint64_t fa
 extern int at_writable_start;
 extern int at_writable_end;
 
-void VBAR_EL1();
-
 static uint64_t pages_needed_for( uint64_t size )
 {
   return ((size + 4095) >> 12);
@@ -858,10 +866,11 @@ void __attribute__(( noreturn )) enter_secure_el1_himem( Core *core )
 {
   static volatile bool initialising = true;
 
-  asm volatile ( "\tmsr VBAR_EL1, %[table]\n" : : [table] "r" (VBAR_EL1) );
+  asm volatile ( "\tmsr VBAR_EL1, %[table]\n" : : [table] "r" (VBAR_SEL1) );
 
-  // ARM DDI 0487C.a D10-2942
-  asm volatile ( "\tmsr CNTKCTL_EL1, %[bits]\n" : : [bits] "r" (0b1100000011) );
+  vm[0].vbar_el1 = (uint64_t) VBAR_SEL1;
+
+  asm volatile ( "\tmsr CNTKCTL_EL1, %[bits]\n" : : [bits] "r" (vm[0].cntkctl_el1) );
 
   core->core = core;
 
@@ -904,11 +913,11 @@ void __attribute__(( noreturn )) enter_secure_el1_himem( Core *core )
 
 extern void switch_to_running_in_high_memory( Core *phys_core, void (*himem_code)( Core *core ) );
 
-void __attribute__(( noreturn )) enter_secure_el1( Core *phys_core, int number, uint64_t volatile *present )
+void __attribute__(( noreturn )) isambard_secure_el1( Core *phys_core, int number, uint64_t *present )
 {
   static volatile bool initialising = true;
 
-  standard_isambard_cores = *present; // Good to 64 cores
+  standard_isambard_cores = *present; // Good to 64 cores, extend to an array
 
   // This is entered in low memory, with caches disabled.
 
@@ -1071,6 +1080,23 @@ static thread_switch system_driver_request( Core *core, thread_context *thread )
     }
     result.now = thread->next;
     remove_thread( thread );
+    core->runnable = result.now;
+    break;
+  case Isambard_System_Service_Thread_Make_Partner:
+    {
+      if (vm[1].vttbr_el2 != 0) BSOD( __COUNTER__ ); // Only one VM atm
+      if (thread->regs[2] != 4096) BSOD( __COUNTER__ ); // Only one VM atm
+      vm[1].vttbr_el2 = (1ull << 48) | thread->regs[1];
+      thread_context *partner = allocate_heap( sizeof( thread_context ) );
+      thread->partner = partner;
+      initialise_new_thread( thread->partner );
+      partner->partner = thread;
+      // This is the secure map, it is the only one that is allowed to switch
+      // between partners.
+      partner->current_map = thread->stack_pointer[0].caller_map;
+      partner->pc = 0;
+      partner->spsr = 0x1d3;
+    }
     break;
   default:
     core->system_thread_stack.entry[3] = thread->regs[0];

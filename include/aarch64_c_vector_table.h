@@ -254,16 +254,23 @@ void __attribute__(( noreturn, noinline, optimize( "-Os" ) )) el3_resume_thread(
 #if HANDLER_EL == 1
 // Support routines
 // Don't make any calls from this routine, we don't want a stack frame
-// This routine is used at secure el1, to enter other secure threads at el0
+// This routine is used at secure el1, to enter whichever thread is now
+// the current thread. The old thread's state has already been completely
+// stored.
 void __attribute__(( noreturn, noinline, optimize( "-Os" ) )) el1_enter_thread( thread_switch threads )
 {
+  integer_register spsr = threads.now->spsr;
+  integer_register pc = threads.now->pc;
+  if (0 != (spsr & 0x10) && 0 != threads.now->partner) {
+    // Switch to EL3, to switch to EL2
+    asm ( "smc 0" );
+  }
   // Load thread.now.pc, thread.now.spsr
-  asm volatile ( "ldp x2, x3, [%[thread], #%[offset]]" 
-             "\n\tmsr elr_el1, x2"
-             "\n\tmsr spsr_el1, x3"
+  asm volatile ( "msr elr_el1, %[pc]"
+             "\n\tmsr spsr_el1, %[spsr]"
 		  :
-		  : [thread] "r" (threads.now), [offset] "i" (offsetof( thread_context, pc ))
-                  : "x2", "x3" );
+		  : [pc] "r" (pc), [spsr] "r" (spsr) );
+
   load_pair( 30, 29 ); // x30 & stored stack pointer (into x29)
   asm volatile ( "msr sp_el0, x29" ); // Assuming always sp0, doesn't affect A32 code, stack's in a normal register
   load_pair( 2, 3 );
@@ -327,7 +334,7 @@ void __attribute__(( noreturn, noinline, optimize( "-Os" ) )) el2_enter_thread( 
 {
   if (threads.now == threads.then->partner) {
     // Leave Non-Secure mode
-    asm volatile( "smc 0" );
+    asm volatile( "smc 99" );
   }
   // Load thread.now.pc, thread.now.spsr
   asm volatile ( "ldp x2, x3, [%[thread], #%[offset]]" 

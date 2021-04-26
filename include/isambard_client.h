@@ -269,3 +269,7 @@ extern integer_register Isambard_31( integer_register o, uint32_t call, integer_
 extern void Isambard_40( integer_register o, uint32_t call, integer_register p1, integer_register p2, integer_register p3, integer_register p4 ); 
 extern integer_register Isambard_41( integer_register o, uint32_t call, integer_register p1, integer_register p2, integer_register p3, integer_register p4 );
 
+// For Virtual Machine implementations
+// FIXME Return various _EL2 register values, so exception can be handled
+extern void switch_to_partner( void (*exception_handler)( uint32_t syndrome, uint64_t fa, uint64_t ipa ) );
+

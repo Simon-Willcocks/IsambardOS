@@ -26,6 +26,9 @@ enum Isambard_Special_Request {
 , Isambard_System_Service_Thread_Next_Runnable
 , Isambard_System_Service_Thread_Last_Runnable
 
+, Isambard_System_Service_Thread_Make_Partner
+, Isambard_System_Service_Thread_Switch_To_Partner
+
 , Isambard_System_Service_Create_Thread
 };
 

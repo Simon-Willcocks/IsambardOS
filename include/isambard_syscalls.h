@@ -15,5 +15,7 @@
 #define ISAMBARD_RETURN 0xf00a
 #define ISAMBARD_EXCEPTION 0xf00b
 
+#define ISAMBARD_SWITCH_TO_PARTNER 0xf00c
+
 // Only usable by system driver:
-#define ISAMBARD_SYSTEM_REQUEST 0xf00c
+#define ISAMBARD_SYSTEM_REQUEST 0xf00d

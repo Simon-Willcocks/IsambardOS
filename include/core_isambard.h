@@ -18,8 +18,11 @@ struct thread_context {
   thread_context *next;
   thread_context *prev;
   thread_context **list;
+
+  // Virtual machine
   thread_context *partner;
 
+  // Do not modify the order of these without good reason!
   integer_register regs[31];
   integer_register sp;
   integer_register pc;
@@ -71,6 +74,13 @@ struct isambard_core {
   thread_context *blocked_with_timeout;
   struct isambard_core *physical_address;      // Physical address of this struct
   struct isambard_core *low_virtual_address;       // Virtual address of this struct, offset from _start
+  // Virtual machine
+  struct {
+    uint64_t data[4];
+  } __attribute__(( aligned( 16 ) )) el2_stack;
+  struct {
+    uint64_t data[6];
+  } __attribute__(( aligned( 16 ) )) el3_stack;
   // Keep the following at the top of a page (CORE_STACK_SIZE is calculated by build.sh)
   uint64_t __attribute__(( aligned( 16 ) )) stack[CORE_STACK_SIZE];
   struct isambard_core *core; // Pointer to the start of this structure

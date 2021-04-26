@@ -7,6 +7,9 @@ void *memset(void *s, int c, unsigned long long n);
 
 #include "kernel.h"
 #include "exclusive.h"
+#include "kernel_translation_tables.h"
+
+void initialise_shared_isambard_kernel_tables( Core *core0, int cores );
 
 uint8_t initial_first_free_page; // Not a real variable, its location is set by the linker
 integer_register volatile number_of_cores = 0;
@@ -20,38 +23,7 @@ static inline int read_number_of_cores()
   return ((res >> 24) & 0x3) +1;
 }
 
-extern void setup_el3_for_reentry( int number );
-
-typedef void __attribute__(( noreturn )) (*secure_el1_code)( Core *core, int number, uint64_t volatile *present );
-
-static void __attribute__(( noreturn )) run_at_secure_el1( Core *core, int number, uint64_t volatile *present, secure_el1_code code )
-{
-  core->runnable = 0;
-  core->core = 0;
-
-  asm volatile ( "\tmsr sp_el1, %[SP]"
-               "\n\tmov sp, %[SP]"
-               "\n\tmsr spsr_el3, %[PSR]"
-               "\n\tmsr elr_el3, %[EL1]"
-               "\n\tmov x0, %[CORE]"
-               "\n\tmov x1, %[NUMBER]"
-               "\n\tmov x2, %[PRESENT]"
-               "\n\teret"
-               :
-               : [SP] "r" (&core->core) // So core and runnable aren't overwritten as stack
-               , [EL1] "r" (code)
-               , [CORE] "r" (core)
-               , [NUMBER] "r" (number)
-               , [PRESENT] "r" (present)
-               , [PSR] "r" (0xc5) // EL1, using SP_EL1, interrupts disabled
-               : "x0", "x1", "x2" );
-
-  __builtin_unreachable();
-}
-
-extern void __attribute__(( noreturn )) enter_secure_el1( Core *phys_core, int number, uint64_t volatile *present );
-
-void __attribute__(( noreturn, noinline )) c_el3_nommu( Core *core, int number )
+void __attribute__(( noreturn, noinline )) c_el3_nommu( Core *core, unsigned number )
 {
   // Running at EL3, without memory management, which means load/store exclusive is inactive
 #ifdef QEMU
@@ -60,35 +32,86 @@ void __attribute__(( noreturn, noinline )) c_el3_nommu( Core *core, int number )
   asm volatile ( "msr cntfrq_el0, %[bits]\n" : : [bits] "r" (38400000) ); // Frequency of clock (pi3)
 #endif
 
+  // Sets bits:
+  //   11: ST Do not trap EL1 accesses of CNTPS_* to EL3
+  //   10: RW Lower levels Aarch64
+  //    9: SIF Secure Instruction Fetch (only from secure memory)
+  //  ~ 7: SMD Secure Monitor Call disable
+  //    5,4: res1
+  asm volatile ( "\tmsr scr_el3, %[bits]" : : [bits] "r" (0b00000000111000110000) );
+
   if (sizeof( uint32_t ) != 4 || sizeof( uint64_t ) != 8) {
     asm volatile ( "wfi" );
     __builtin_unreachable();
   }
 
-  static uint64_t volatile present = 0;
+  // Note: Until the MMU is enabled, exclusive access instructions do not work!
+
+  // Identify special cores; all set their appropriate entry (no MMU, atomic
+  // operations, write once, then assume the memory is in use) to either
+  // NORMAL, in which case return, or SPECIAL, and do your own thing.
+  // Any core can be SPECIAL, including core 0. If none are NORMAL, this
+  // routine simply won't continue!
+  static core_types *present = 0;
+  static bool start_roll_call = false;
 
   if (number == 0) {
-    // Only one core should do this, and there is always a core 0.
     number_of_cores = read_number_of_cores();
-    first_free_page = (integer_register) (core + number_of_cores);
 
-    // Until I can sort out a no-exclusive-operators bit manipulation, there're all here...
-    present = (1 << number_of_cores)-1;
+    present = (void*) (core + number_of_cores);
 
-    asm volatile ( "dsb sy" );
+    for (unsigned i = 0; i < number_of_cores; i++) {
+      present[i] = WAITING;
+    }
+
+    start_roll_call = true;
+
+    asm ( "sev" );
+  }
+  else {
+    while (!start_roll_call) {
+      asm ( "wfe" );
+    }
   }
 
-  // Note that this memset will fill the whole stack with zeros, but this routine does
-  // not return, so there should be no bad effects.
+  roll_call( present, number );
+
+  // TODO: When processors with more than 64 cores become common, simply
+  // expand this array.
+  static uint64_t present_bits[1] = { 0 };
+
+  // Every core still here waits for the other cores to fill in their
+  // present entries, and the lowest numbered normal core to fill in
+  // first_free_page, at which point the present array will never be written
+  // again. (A straggler core may perform a read or two, but that's safe.)
+  while (first_free_page == 0) {
+    bool lowest_normal = true; // As far as I know
+    bool all_present = true; // As far as I know
+    for (unsigned i = 0; i < number_of_cores && first_free_page == 0; i++) {
+      if (present[i] == NORMAL && i < number) lowest_normal = false;
+      all_present = all_present && (present[i] != WAITING);
+    }
+
+    if (first_free_page == 0 && all_present && lowest_normal) {
+      for (unsigned i = 0; i < number_of_cores; i++) {
+        if (present[i] == NORMAL) present_bits[i / 64] |= (1ull << (i % 64));
+      }
+
+      Core *core0 = core - number;
+      initialise_shared_isambard_kernel_tables( core0, number_of_cores );
+
+      first_free_page = (integer_register) present;
+    }
+  }
+
+  // Note that this memset will fill the whole stack with zeros, but this
+  // routine does not return, so there should be no bad effects.
   // But use local variables with care, if at all!
   memset( core, 0, sizeof( Core ) );
 
-  while (first_free_page == 0 || number_of_cores == 0) {}
-  // The variables have been initialised by core 0
-
-  setup_el3_for_reentry( number );
-
-  run_at_secure_el1( core, number, &present, enter_secure_el1 );
+if (number != 0) { for (;;) { asm ( "wfi" ); } }
+  // Note: the address of the present array will be an offset from _start.
+  el3_synchronised_initialise( core, number, present_bits );
 
   __builtin_unreachable();
 }

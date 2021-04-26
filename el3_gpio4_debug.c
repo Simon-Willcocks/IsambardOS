@@ -4,7 +4,9 @@
 // Initialise GPIO4 as output, and assume there's an LED attached with a simple inline resistor
 // Will blink, when an HVC instruction is executed at Secure EL1 (or EL2, probably)
 
-#include "types.h"
+#include "kernel.h"
+
+#include "kernel_translation_tables.h"
 
 struct __attribute__(( packed )) gpio {
   uint32_t gpfsel[6];  // 0x00 - 0x14
@@ -431,26 +433,20 @@ void showme()
 
 #include "exclusive.h"
 
-void setup_el3_for_reentry( int number )
+void __attribute__(( noreturn )) el3_synchronised_initialise( EL_PARAMETERS )
 {
-  // Sets bits:
-  //   11: ST Do not trap EL1 accesses of CNTPS_* to EL3
-  //   10: RW Lower levels Aarch64
-  //    9: SIF Secure Instruction Fetch (only from secure memory)
-  //  ~ 7: SMD Secure Monitor Call disable
-  //    5,4: res1
-  asm volatile ( "\tmsr scr_el3, %[bits]" : : [bits] "r" (0b00000000111000110000) );
+  el3_run_at_secure_el1( EL_ARGUMENTS, isambard_secure_el1 );
+}
 
+void roll_call( core_types *present, unsigned number )
+{
   asm volatile ( "\tmsr VBAR_EL3, %[table]\n" : : [table] "r" (VBAR_EL3) );
 
-  static uint64_t volatile gpio4_initialised = 0;
   if (number == 0) {
     led_init( 0x3f200000 );
     led_on( 0x3f200000 );
-
-    gpio4_initialised = 1;
   }
 
-  // Don't return until initialised, in case we want to use it immediately
-  while (gpio4_initialised != 1) {}
+  present[number] = NORMAL;
 }
+

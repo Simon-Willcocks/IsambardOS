@@ -34,12 +34,14 @@ rm /tmp/$$.o
 CFLAGS="-I include -mgeneral-regs-only $OPTIMISATION -g -Wall -Wextra -fno-zero-initialized-in-bss -nostartfiles -nostdlib -mtune=cortex-a53 -ffixed-x18 -Wno-unused-function $QEMU "
 
 KERNEL_ELEMENTS="boot.c el3.c el3_gpio4_debug.c secure_el1.c kernel_translation_tables.c memset.c"
+KERNEL_ELEMENTS="boot.c el3.c el3_virtual_machines.c secure_el1.c kernel_translation_tables.c memset.c"
 
 SYSTEM_DRIVER=system
 MEMORY_DRIVER=physical_memory_allocator
 SPECIAL_DRIVERS="$SYSTEM_DRIVER $MEMORY_DRIVER"
 
 DRIVERS="pi3gpu show_page riscos"
+#DRIVERS="test_vm"
 
 echo Building drivers: $DRIVERS
 

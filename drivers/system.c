@@ -412,6 +412,29 @@ void MapValue__DRIVER_SYSTEM__remove_interrupt_handler( MapValue o, INTERRUPT_HA
   MapValue__DRIVER_SYSTEM__remove_interrupt_handler__return();
 }
 
+void MapValue__DRIVER_SYSTEM__make_partner_thread( MapValue o, PHYSICAL_MEMORY_BLOCK EL2_TT )
+{
+  o = o;
+
+// This is how it should be coded, given the ability to recurse.
+// That would entail storing the SP on making outgoing calls, and restoring
+// it when the same thread re-enters the map. (The lock should only be
+// released once, when the stored SP returns to zero, say.)
+// The amount of remaining stack should also be checked, and an exception
+// thrown if it's not enough.
+//  uint64_t size = PHYSICAL_MEMORY_BLOCK__size( EL2_TT ).r;
+//  uint64_t start_pa = PHYSICAL_MEMORY_BLOCK__physical_address( EL2_TT ).r;
+
+  ContiguousMemoryBlock cmb;
+  cmb.r = make_special_request( Isambard_System_Service_ReadInterface, EL2_TT );
+  uint64_t start_pa = cmb.start_page << 12;
+  uint64_t size = cmb.page_count << 12;
+
+  make_special_request( Isambard_System_Service_Thread_Make_Partner, start_pa, size );
+
+  MapValue__DRIVER_SYSTEM__make_partner_thread__return();
+}
+
 void __attribute__(( noreturn )) ContiguousMemoryBlock__PHYSICAL_MEMORY_BLOCK__physical_address( ContiguousMemoryBlock cmb )
 {
   ContiguousMemoryBlock__PHYSICAL_MEMORY_BLOCK__physical_address__return( NUMBER__from_integer_register( cmb.start_page << 12) );
@@ -502,6 +525,10 @@ static void start_ms_timer()
   uint32_t frequency;
   asm ( "mrs %[freq], CNTFRQ_EL0" : [freq] "=r" (frequency) );
   ticks_per_millisecond = frequency / 1000;
+
+#ifdef QEMU
+ticks_per_millisecond = frequency / 10;
+#endif
 
   asm ( "mrs %[d], CNTPCT_EL0" : [d] "=r" (now) );
   this_core.last_cval = now + ticks_per_millisecond; // Match in a millisecond

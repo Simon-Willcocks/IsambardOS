@@ -21,12 +21,12 @@ typedef union {
   uint64_t raw;
   struct __attribute__(( packed )) {
     uint64_t type:2;
-    uint64_t memory_attributes:4;
-    uint64_t readable:1;
-    uint64_t writable:1; // Allows for write-only memory!
+    uint64_t memory_attributes:4;               // Differs from L1
+    uint64_t readable:1;                        // Differs from L1
+    uint64_t writable:1;                        // Differs from L1, allows for write-only memory!
     uint64_t shareability:2;
     uint64_t access_flag:1;
-    uint64_t res0_1:1;
+    uint64_t res0_1:1;                          // Differs from L1
     uint64_t four_k_page_number:39;
     uint64_t dirty_bit_modifier:1;
     uint64_t contiguous:1;

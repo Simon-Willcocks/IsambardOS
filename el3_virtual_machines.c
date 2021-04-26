@@ -565,6 +565,7 @@ INC( to_el3, x4, x5 ) \
     "\n  msr scr_el3, x3" \
     "\n  tbnz x3, #0, switch_to_non_secure" \
     "\n  // Switch to secure mode" \
+"\n bl bsod" \
     "\n  mov x0, x30" \
     "\n  bl restore_secure_system_regs" \
     "\n  mov x30, x0" \

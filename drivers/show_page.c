@@ -297,6 +297,8 @@ void entry()
   PHYSICAL_MEMORY_BLOCK screen_page = FRAME_BUFFER__get_frame_buffer( fb );
   DRIVER_SYSTEM__map_at( driver_system(), screen_page, NUMBER__from_integer_register( mapped_address ) );
 
+show_word( 900, 500, PHYSICAL_MEMORY_BLOCK__physical_address( screen_page ).r, 0xffffffff );
+
   TND__TRIVIAL_NUMERIC_DISPLAY__register_service( "Trivial Numeric Display", 0 );
 }
 

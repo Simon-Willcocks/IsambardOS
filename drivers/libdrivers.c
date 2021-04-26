@@ -76,3 +76,14 @@ integer_register unknown_call( integer_register call )
   for (;;) { asm volatile( "mov x15, %0\n\twfi" : : "r" (call) ); }
   return 0;
 }
+
+asm ( ".section .text"
+    GLOBAL_FUNCTION( switch_to_partner )
+    "\n\tstp x29, x30, [sp, #-32]!"
+    "\n\tstp x0, x1, [sp, #16]"
+    "\n\tsvc " ENSTRING( ISAMBARD_SWITCH_TO_PARTNER )
+    "\n\tldp x16, x17, [sp, #16]"
+    "\n\tblr x16"
+    "\n\tldp x29, x30, [sp], #32"
+    "\n\tret"
+    "\n.previous" );

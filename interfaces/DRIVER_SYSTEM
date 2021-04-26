@@ -15,6 +15,11 @@ interface DRIVER_SYSTEM
   register_interrupt_handler IN handler: INTERRUPT_HANDLER, interrupt: NUMBER
   remove_interrupt_handler IN handler: INTERRUPT_HANDLER, interrupt: NUMBER
 
+  # Once made, use switch_to_partner
+  # EL2_TT is where the translation table of 2M blocks will be kept.
+  # Initially, only one GB, possibly extendible with larger blocks?
+  make_partner_thread IN EL2_TT: PHYSICAL_MEMORY_BLOCK
+
   # Can only be called once, must be called before anything tries to allocate memory
   set_memory_top IN top: NUMBER
 end
