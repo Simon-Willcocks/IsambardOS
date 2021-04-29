@@ -1291,6 +1291,9 @@ thread_switch __attribute__(( noinline )) SEL1_LOWER_AARCH64_SYNC_CODE( void *op
   if (result.now->current_map != result.then->current_map) {
     change_map( core, result.now, result.now->current_map );
   }
+  if (core->runnable != result.now) {
+    asm ( "smc 0x4444" ); // FIXME, can't I just set core->runnable here?
+  }
   return result;
 }
 
@@ -1307,6 +1310,9 @@ thread_switch __attribute__(( noinline )) SEL1_LOWER_AARCH64_IRQ_CODE( void *opa
     change_map( core, result.now, result.now->current_map );
   }
 
+  if (core->runnable != result.now) {
+    asm ( "smc 0x3333" ); // FIXME, can't I just set core->runnable here?
+  }
   return result;
 }
 thread_switch __attribute__(( noinline )) SEL1_LOWER_AARCH64_SERROR_CODE( void *opaque, thread_context *thread )

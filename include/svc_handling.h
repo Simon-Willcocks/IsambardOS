@@ -37,17 +37,21 @@ static inline thread_switch handle_svc_gate( Core *core, thread_context *thread 
       }
       // Timer tick
       if (core->blocked_with_timeout != 0) {
+        thread_context *blocked_list_head = core->blocked_with_timeout;
+#ifdef QEMU
+  core->blocked_with_timeout->regs[1] = 1;
+#endif
         if (--core->blocked_with_timeout->regs[1] == 0) {
-          thread_context *blocked_thread = core->blocked_with_timeout;
           do {
-            blocked_thread->regs[0] = -1; // C
-            blocked_thread->gate = 0; // No longer blocked
-            insert_new_thread_after_old( blocked_thread, thread );
-            blocked_thread = (void*) blocked_thread->regs[17];
-          } while (blocked_thread != 0 && blocked_thread->regs[1] == 0);
-          core->blocked_with_timeout = blocked_thread;
-          if (blocked_thread != 0) {
-            blocked_thread->regs[16] = (integer_register) &core->blocked_with_timeout;
+            blocked_list_head->regs[0] = -1; // C
+            blocked_list_head->gate = 0; // No longer blocked
+            insert_new_thread_after_old( blocked_list_head, thread );
+            blocked_list_head = (void*) blocked_list_head->regs[17];
+          } while (blocked_list_head != 0 && blocked_list_head->regs[1] == 0);
+          core->blocked_with_timeout = blocked_list_head;
+          if (blocked_list_head != 0) {
+            // Pointer back to the pointer pointing to the head :)
+            blocked_list_head->regs[16] = (integer_register) &core->blocked_with_timeout;
           }
         }
       }
@@ -283,6 +287,7 @@ static inline thread_switch handle_svc_wait_for_lock( Core *core, thread_context
         }
 
         result.now = thread->next;
+        core->runnable = result.now;
         if (result.now == thread) {
           BSOD( __COUNTER__ ); // This is the only runnable thread on this core, what happened to the idle thread?
         }
@@ -440,6 +445,7 @@ static inline thread_switch handle_svc( Core *core, thread_context *thread, int 
       // Another thread is runnable, yield returns True, eventually
       thread->regs[0] = true;
       result.now = thread->next;
+      core->runnable = result.now;
     }
     else {
       thread->regs[0] = false;
@@ -554,6 +560,8 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
       if (thread->current_map != thread->partner->current_map) BSOD( __COUNTER__ );
       thread->partner->next = thread->next;
       thread->partner->prev = thread->prev;
+      thread->next->prev = thread->partner;
+      thread->prev->next = thread->partner;
       thread->next = thread;
       thread->prev = thread;
       result.now = thread->partner;

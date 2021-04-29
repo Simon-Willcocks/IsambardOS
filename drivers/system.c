@@ -202,19 +202,13 @@ interrupts_handled[0]+= 0x100000;
   if (0 != (sources & 2)) { // Timer interrupt
 #ifdef QEMU
     asm ( "mrs %[d], CNTPCT_EL0" : [d] "=r" (this_core.last_cval) );
-    this_core.last_cval += 40 * ticks_per_millisecond;
+    this_core.last_cval += 10 * ticks_per_millisecond;
 #else
     this_core.last_cval += ticks_per_millisecond;
 #endif
     asm ( "msr CNTP_CVAL_EL0, %[d]" : : [d] "r" (this_core.last_cval) );
-#ifdef QEMU
-for (int i = 0; i < 10; i++) {
-#endif
     ms_ticks ++;
     gate_function( 0, 0 ); // Special case for interrupt handler thread, releases all threads that timeout this tick
-#ifdef QEMU
-}
-#endif
   }
 
   for (int i = 0; sources != 0 && i < 12; i++) {
@@ -527,7 +521,7 @@ static void start_ms_timer()
   ticks_per_millisecond = frequency / 1000;
 
 #ifdef QEMU
-ticks_per_millisecond = frequency / 10;
+ticks_per_millisecond = frequency / 500;
 #endif
 
   asm ( "mrs %[d], CNTPCT_EL0" : [d] "=r" (now) );

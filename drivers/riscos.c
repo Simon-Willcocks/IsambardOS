@@ -27,9 +27,9 @@ TRIVIAL_NUMERIC_DISPLAY tnd = {};
 
 void vm_exception_handler( uint32_t syndrome, uint64_t fa, uint64_t ipa )
 {
-  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 400 ), N( 200 ), N( syndrome ), N( 0xfffff0f0 ) );
-  TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 400 ), N( 210 ), N( fa ), N( 0xfffff0f0 ) );
-  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 400 ), N( 220 ), N( ipa ), N( 0xfffff0f0 ) );
+  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 800 ), N( 200 ), N( syndrome ), N( 0xfffff0f0 ) );
+  TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 800 ), N( 210 ), N( fa ), N( 0xfffff0f0 ) );
+  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 800 ), N( 220 ), N( ipa ), N( 0xfffff0f0 ) );
   asm ( "svc 0" );
 }
 
@@ -86,11 +86,14 @@ static uint32_t __attribute__(( target("+crc") )) hardware_crc32( uint8_t *p, ui
 static void timer_thread()
 {
   uint32_t *arm_code = (void *) ro_address.r;
+  uint32_t count = 0;
   for (;;) {
-    sleep_ms( 25 );
     // Insufficient asm volatile ( "dc civac, %[va]" : : [va] "r" (&arm_code[0x100]) );
-    asm ( "svc 0" );
     TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 1000 ), NUMBER__from_integer_register( arm_code[0x100] ), N( 0xffffffff ) );
+    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 1010 ), NUMBER__from_integer_register( count++ ), N( 0xffffffff ) );
+    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 1020 ), NUMBER__from_integer_register( this_thread ), N( 0xffffffff ) );
+    asm ( "svc 0" );
+    sleep_ms( 25 );
   }
 }
 #endif
@@ -98,31 +101,35 @@ static void timer_thread()
 static bool image_is_valid()
 {
 #ifdef QEMU
-  static uint64_t __attribute__(( aligned( 16 ) )) stack[32];
-  create_thread( timer_thread, stack + 32 );
   uint32_t *arm_code = (void *) ro_address.r;
   int i = 0;
-  arm_code[i++] = 0xe3a00000; // mov r0, #0
-  arm_code[i++] = 0xe2800001; // add r0, r0, #1
-  arm_code[i++] = 0xe2800001; // add r0, r0, #1
+  arm_code[i++] = 0xe3a0947f; // mov r9, #0x7f000000
+  arm_code[i++] = 0xe2999001; // add r9, r9, #1
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
 
   int loop = i;
                               // loop:
-  arm_code[i++] = 0xe3a01000; // mov	r1, #0
-  arm_code[i++] = 0xe5810400; // str	r0, [r1, #1024]	; 0x400
+  arm_code[i++] = 0xe5819400; // str	r9, [r1, #1024]	; 0x400
 
-  arm_code[i++] = 0xe2800001; // add r0, r0, #1
+  arm_code[i++] = 0xe2999001; // add r9, r9, #1
+  arm_code[i++] = 0x5afffffe - (i - loop); // bpl loop
 
-  arm_code[i++] = 0xe3a0143f; // 	mov	r1, #1056964608	; 0x3f000000
-  arm_code[i++] = 0xe3811602; // 	orr	r1, r1, #2097152	; 0x200000
-  arm_code[i++] = 0xe3a02010; // 	mov	r2, #16
-  arm_code[i++] = 0xe581201c; // 	str	r2, [r1, #28]
+  arm_code[i++] = 0xe3a0743f; // 	mov	r7, #1056964608	; 0x3f000000
+  arm_code[i++] = 0xe3877602; // 	orr	r7, r7, #2097152	; 0x200000
+  arm_code[i++] = 0xe3a06010; // 	mov	r6, #16
+  arm_code[i++] = 0xe587601c; // 	str	r6, [r7, #28]
+
+  arm_code[i++] = 0xe3a0947f; // mov r9, #0x7f000000
 
   arm_code[i++] = 0xeafffffe - (i - loop); // b loop
 
   for (int j = 0; j < i; j++) {
     TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( j*12 + 100 ), NUMBER__from_integer_register( arm_code[j] ), N( 0xffffffff ) );
   }
+  arm_code[0x100] = 0x11223344;
+
+  static uint64_t __attribute__(( aligned( 16 ) )) stack[32];
+  create_thread( timer_thread, stack + 32 );
 
   return true;
 #else
@@ -199,10 +206,10 @@ void entry()
     DRIVER_SYSTEM__make_partner_thread( driver_system(), PHYSICAL_MEMORY_BLOCK__duplicate_to_pass_to( driver_system().r, el2_tt ) );
     int count = 0;
     for (;;) {
+      sleep_ms( 5000 );
       asm ( "svc 0" );
+      TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 750 ), N( 250 ), N( count++ ), N( 0xffffff00 ) );
       switch_to_partner( vm_exception_handler );
-      TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 500 ), N( 200 ), N( count++ ), N( 0xffffffff ) );
-      for (;;) {}
     }
   }
 }
