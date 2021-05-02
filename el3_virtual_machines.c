@@ -156,6 +156,7 @@ show( esr_el1 );
 show( spsr_el1 );
 show( sctlr_el1 );
 show( sp_el1 );
+show( vbar_el1 );
 y += 20;
 show( far_el2 );
 show( elr_el2 );
@@ -163,12 +164,14 @@ show( esr_el2 );
 show( spsr_el2 );
 show( sctlr_el2 );
 show( sp_el2 );
+show( vbar_el2 );
 y += 20;
 show( far_el3 );
 show( elr_el3 );
 show( esr_el3 );
 show( spsr_el3 );
 show( sctlr_el3 );
+show( vbar_el3 );
 y += 10;
 show( scr_el3 );
 
@@ -271,7 +274,14 @@ show( scr_el3 );
 
 #define AARCH64_VECTOR_TABLE_NEVER_SP0_CODE asm ( \
     "\nin_el3: // x1 points to core, runnable, no other registers are meaningful" \
+\
     "\n  add sp, sp, #16 // Don't care what those registers were, but reset sp" \
+\
+"\n mrs x2, sp_el1" \
+"\n and x2, x2, #0xfff" \
+"\n cmp x2, #0xff0" \
+"\n b.ne bsod" \
+\
     "\n  mrs x2, esr_el3" \
     "\n  mov x3, #0x5e000000" \
     "\n  cmp x3, x2" \
@@ -283,7 +293,6 @@ show( scr_el3 );
     "\n  msr scr_el3, x3" \
     "\n  tbnz x3, #0, switch_to_non_secure" \
     "\n  // Switch to secure mode" \
-"\n bl bsod // Doesn't get here..." \
     "\n  mov x0, x30" \
     "\n  bl restore_secure_system_regs" \
     "\n  mov x30, x0" \
@@ -311,20 +320,23 @@ show( scr_el3 );
     "\n  ldr x30, [x0, #%[regs] + 30 * 8]" \
     load_pair( 0, 1 ) \
     "\n  eret" \
-    "\nbsod: // We've had it, run some C code which never returns" \
-"\n mov x16, x1" \
-    "\n  mov x1, sp" \
-    "\n  orr x1, x1, #0xff0" \
-    "\n  mov sp, x1" \
-    "\n  b c_bsod" \
     : : \
-        [partner] "i" (&((thread_context*)0)->partner), \
         [regs] "i" (&((thread_context*)0)->regs), \
         [pc] "i" (&((thread_context*)0)->pc), \
         [lomem_bits] "i" (lomem_bits) \
     ); \
     asm ( \
     "\nswitch_to_non_secure:" \
+"\n  mov x1, sp" \
+"\n  orr x1, x1, #0xff0" \
+"\n mov w5, #0xe990" \
+"\n movk w5, #0xfe1f, lsl #16" \
+"\n ldr w0, [x1, #8]" \
+"\n cmp w5, w0" \
+"\n b.eq 1f" \
+"\n mov x27, x0" \
+"\n smc 6" \
+"\n1:" \
     "\n  mov x4, #1 // FIXME: only one VM supported, need to get required VMID to this code" \
     ); \
     LOAD_VM_SYSTEM_REGS \
@@ -341,8 +353,13 @@ show( scr_el3 );
 #define AARCH64_VECTOR_TABLE_SPX_SYNC_CODE asm ( "bl bsod" ); \
     asm ( \
     "\n// NOT PART OF THE SPX_SYNC_CODE!" \
+    "\nbsod: // We've had it, run some C code which never returns" \
+    "\n  mov x1, sp" \
+    "\n  orr x1, x1, #0xff0" \
+    "\n  mov sp, x1" \
+    "\n  b c_bsod" \
     "\nstore_el2_exception:" \
-"\n  smc #1" \
+\
     "\n  ldr x1, [x0, #%[partner]] // x0 = lowmem address of non-secure thread, x1 = secure partner" \
     "\n  mrs x2, esr_el2" \
     "\n  mrs x3, far_el2" \
@@ -385,46 +402,26 @@ show( scr_el3 );
     "\n  mov x1, sp" \
     "\n  orr x1, x1, #0xff0 // x1 points to core->core, core->runnable (sp is always 16-byte aligned)" \
     "\n  mrs x0, CurrentEL" \
-    "\n  tbnz x0, #2, in_el3" \
+    "\n  // tbnz x0, #2, in_el3" \
+"\n  cmp x0, #0xc\n b.eq in_el3" \
+"\n  cmp x0, #0x8\n b.eq 1f\n smc 48\n1:\n" \
     \
     "\n  // In EL2: store state and switch modes" \
-); \
-asm ( \
-"\n  ldr x0, [x1]" \
-"\n  and x0, x0, #%[lomem_bits]" \
-"\n  ldp x22, x23, [x1]" \
-"\n add x24, x1, #16" \
-"\n sub x24, x24, #%[core_size]" \
-"\n ldr x25, [x24, #%[it]]" \
-: : [it] "i" (&((Core*)0)->interrupt_thread) \
-        ,[core_size] "i" (sizeof( Core )) \
-        ,[lomem_bits] "i" (lomem_bits) ); \
-asm ( \
     "\n  ldr x0, [x1, #8]" \
     "\n  and x0, x0, #%[lomem_bits]" \
+\
+"\n // mov w5, #0xe990" \
+"\n // movk w5, #0x1f, lsl #16" \
+"\n // cmp w5, w0" \
+"\n // b.eq 1f" \
+"\n // mov x27, x0" \
+"\n // mov x28, x1" \
+"\n // ldp x24, x25, [x1]" \
+"\n // smc 7" \
+"\n1:" \
     store_pair( 2, 3 ) \
     "\n  ldp x2, x3, [sp], #16 // Restores SP_EL2" \
     "\n  stp x2, x3, [x0, #%[regs]]" \
-"\n  ldp x6, x7, [sp, #-16]" \
-"\n mov x27, x0" \
-"\n smc 2" \
-    store_pair( 20, 21 ) \
-    store_pair( 22, 23 ) \
-    store_pair( 24, 25 ) \
-    store_pair( 26, 27 ) \
-    store_pair( 28, 29 ) \
-    "\n  str x30, [x0, #%[regs] + 30 * 8]" \
-    "\n  mrs x2, elr_el2" \
-    "\n  mrs x3, spsr_el2" \
-    "\n  stp x2, x3, [x0, #%[pc]] // Clobbers never-used gate value" \
-    "\n  b store_el2_exception" \
-    : : \
-        [regs] "i" (&((thread_context*)0)->regs), \
-        [pc] "i" (&((thread_context*)0)->pc), \
-        [lomem_bits] "i" (lomem_bits) \
-  );
-
-#if 0
     store_pair( 4, 5 ) \
     store_pair( 6, 7 ) \
     store_pair( 8, 9 ) \
@@ -433,8 +430,22 @@ asm ( \
     store_pair( 14, 15 ) \
     store_pair( 16, 17 ) \
     store_pair( 18, 19 ) \
+    store_pair( 20, 21 ) \
+    store_pair( 22, 23 ) \
+    store_pair( 24, 25 ) \
+    store_pair( 26, 27 ) \
+    store_pair( 28, 29 ) \
+    "\n  str x30, [x0, #%[regs] + 30 * 8]" \
+    "\n  // mrs x2, elr_el2" \
+    "\n  // mrs x3, spsr_el2" \
+    "\n  // stp x2, x3, [x0, #%[pc]] // Clobbers never-used gate value" \
+    "\n  b store_el2_exception" \
+    : : \
+        [regs] "i" (&((thread_context*)0)->regs), \
+        [pc] "i" (&((thread_context*)0)->pc), \
+        [lomem_bits] "i" (lomem_bits) \
+  );
 
-#endif
 
 #define REDIRECT_INTERRUPT_TO_SECURE_EL1 \
   asm ( "0:" \

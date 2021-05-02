@@ -103,25 +103,52 @@ static bool image_is_valid()
 #ifdef QEMU
   uint32_t *arm_code = (void *) ro_address.r;
   int i = 0;
-  arm_code[i++] = 0xe3a0947f; // mov r9, #0x7f000000
-  arm_code[i++] = 0xe2999001; // add r9, r9, #1
+
+  arm_code[i++] = 0xea00000c; // b 1f
+  arm_code[i++] = 0xeafffffe; // 0: b 0b
+  arm_code[i++] = 0xeafffffe; // 0: b 0b
+  arm_code[i++] = 0xeafffffe; // 0: b 0b
+  arm_code[i++] = 0xeafffffe; // 0: b 0b
+  arm_code[i++] = 0xeafffffe; // 0: b 0b
+  arm_code[i++] = 0xeafffffe; // 0: b 0b
+  arm_code[i++] = 0xeafffffe; // 0: b 0b
+  arm_code[i++] = 0xeafffffe; // 0: b 0b
+  arm_code[i++] = 0xeafffffe; // 0: b 0b
+
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
   arm_code[i++] = 0xe3a01000; // mov	r1, #0
 
+  // Set the reset entry point to an infinite loop (Secure EL1 has no cache)
+  arm_code[i++] = 0xe5912004; // ldr	r2, [r1, #4]
+  arm_code[i++] = 0xe5812000; // str	r2, [r1]
+
+
+  //arm_code[i++] = 0xe3a0947f; // mov r9, #0x7f000000
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
   int loop = i;
                               // loop:
-  arm_code[i++] = 0xe5819400; // str	r9, [r1, #1024]	; 0x400
-
   arm_code[i++] = 0xe2999001; // add r9, r9, #1
-  arm_code[i++] = 0x5afffffe - (i - loop); // bpl loop
+  arm_code[i++] = 0xe5819400; // str	r9, [r1, #1024]	; 0x400
+  uint32_t branch = 0x5afffffe - (i - loop);
+  arm_code[i++] = branch; // bpl loop
 
   arm_code[i++] = 0xe3a0743f; // 	mov	r7, #1056964608	; 0x3f000000
   arm_code[i++] = 0xe3877602; // 	orr	r7, r7, #2097152	; 0x200000
   arm_code[i++] = 0xe3a06010; // 	mov	r6, #16
   arm_code[i++] = 0xe587601c; // 	str	r6, [r7, #28]
 
-  arm_code[i++] = 0xe3a0947f; // mov r9, #0x7f000000
-
-  arm_code[i++] = 0xeafffffe - (i - loop); // b loop
+  branch = 0xeafffffe - i + 12;
+  arm_code[i++] = branch; // b 0x30
 
   for (int j = 0; j < i; j++) {
     TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( j*12 + 100 ), NUMBER__from_integer_register( arm_code[j] ), N( 0xffffffff ) );
@@ -206,9 +233,8 @@ void entry()
     DRIVER_SYSTEM__make_partner_thread( driver_system(), PHYSICAL_MEMORY_BLOCK__duplicate_to_pass_to( driver_system().r, el2_tt ) );
     int count = 0;
     for (;;) {
-      sleep_ms( 5000 );
-      asm ( "svc 0" );
       TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 750 ), N( 250 ), N( count++ ), N( 0xffffff00 ) );
+      asm ( "svc 0" );
       switch_to_partner( vm_exception_handler );
     }
   }

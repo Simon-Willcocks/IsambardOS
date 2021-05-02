@@ -550,14 +550,11 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
   }
   case ISAMBARD_SWITCH_TO_PARTNER:
     {
-#if 0
-  uint32_t *screen = (uint32_t*) ((8 << 21) - (32 << 20));
-  for (int i = 0; i < 1920*1080; i++) {
-    screen[i] = 0xff000000 | (i * 0x1001);
-  }
-#endif
       if (thread->partner == 0) BSOD( __COUNTER__ );
       if (thread->current_map != thread->partner->current_map) BSOD( __COUNTER__ );
+if (thread->partner != (void*) 0xfffffffffe1fe990ull) {
+  asm ( "smc 8" );
+}
       thread->partner->next = thread->next;
       thread->partner->prev = thread->prev;
       thread->next->prev = thread->partner;
