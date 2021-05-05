@@ -272,7 +272,7 @@ asm volatile ( "dc ivac, %[va]" : : [va] "r" (&d[i]) ); // Does this fix it, can
 void *allocate_heap( uint64_t size )
 {
   uint32_t new_bottom;
-  size = (size + 15) & ~15ull;
+  size = (size + 31) & ~31ull;
   do {
     new_bottom = load_exclusive_word( &kernel_heap_bottom ) - size;
   } while (!store_exclusive_word( &kernel_heap_bottom, new_bottom ));
