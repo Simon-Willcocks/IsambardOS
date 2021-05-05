@@ -557,6 +557,7 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
       if (thread->partner == 0) BSOD( __COUNTER__ );
       if (thread->current_map != thread->partner->current_map) BSOD( __COUNTER__ );
 
+      // These members are only affected by secure el1.
       thread->partner->next = thread->next;
       thread->partner->prev = thread->prev;
       thread->next->prev = thread->partner;
@@ -565,6 +566,23 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
       thread->prev = thread;
       result.now = thread->partner;
       core->runnable = result.now;
+
+      integer_register spsr = result.now->spsr;
+      if (0 != (spsr & 0x10) || ((spsr & 0x1e) == 8)) {
+        asm ( "dc ivac, %[r]" : : [r] "r" (&result.now->pc) );
+        result.now->pc = thread->regs[1];
+        asm ( "dc civac, %[r]" : : [r] "r" (&result.now->pc) );
+        // Moving to Non-Secure
+        thread->regs[0] = 0x7777777777777777ull; // Will be pc
+        thread->regs[1] = 0x7777777777777777ull; // Will be syndrome
+        thread->regs[2] = 0x7777777777777777ull; // Will be fault address
+        thread->regs[3] = 0x7777777777777777ull; // Will be intermediate physical address
+        asm ( "dc civac, %[r]" : : [r] "r" (thread->regs) );
+      }
+      else {
+        // EL2 will have updated the first three registers
+        asm ( "dc ivac, %[r]" : : [r] "r" (core->runnable->regs) );
+      }
     }
     return result;
   case ISAMBARD_SYSTEM_REQUEST:

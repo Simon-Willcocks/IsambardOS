@@ -25,14 +25,6 @@ ISAMBARD_INTERFACE( TRIVIAL_NUMERIC_DISPLAY )
 
 TRIVIAL_NUMERIC_DISPLAY tnd = {};
 
-void vm_exception_handler( uint32_t syndrome, uint64_t fa, uint64_t ipa )
-{
-  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 200 ), N( syndrome ), N( 0xfffff0f0 ) );
-  TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1400 ), N( 210 ), N( fa ), N( 0xfffff0f0 ) );
-  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 220 ), N( ipa ), N( 0xfffff0f0 ) );
-  asm ( "svc 0" );
-}
-
 static void load_guest_os( PHYSICAL_MEMORY_BLOCK riscos_memory )
 {
 #ifdef QEMU
@@ -195,6 +187,17 @@ static bool image_is_valid()
 #endif
 }
 
+uint64_t vm_handler( uint64_t pc, uint64_t syndrome, uint64_t fault_address, uint64_t intermediate_physical_address )
+{
+  static int count = 0;
+  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 200 ), N( syndrome ), N( 0xffff8080 ) );
+  TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1400 ), N( 210 ), N( fault_address ), N( 0xffff8080 ) );
+  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 220 ), N( intermediate_physical_address ), N( 0xffff8080 ) );
+  TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1400 ), N( 230 ), N( pc ), N( 0xfffff0f0 ) );
+  TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1400 ), N( 240 ), N( count++ ), N( 0xfffff0f0 ) );
+  return pc + 4;
+}
+
 void entry()
 {
   tnd = TRIVIAL_NUMERIC_DISPLAY__get_service( "Trivial Numeric Display", -1 );
@@ -231,11 +234,9 @@ void entry()
     }
 
     DRIVER_SYSTEM__make_partner_thread( driver_system(), PHYSICAL_MEMORY_BLOCK__duplicate_to_pass_to( driver_system().r, el2_tt ) );
-    int count = 0;
+    uint64_t next_pc = 0;
     for (;;) {
-      TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 750 ), N( 250 ), N( count++ ), N( 0xffffff00 ) );
-      asm ( "svc 0" );
-      switch_to_partner( vm_exception_handler );
+      next_pc = switch_to_partner( vm_handler, next_pc );
     }
   }
 }

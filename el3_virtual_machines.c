@@ -392,7 +392,7 @@ show( scr_el3 );
 \
     "\n  mov x1, sp" \
     "\n  orr x1, x1, #0xff0 // x1 points to core->core, core->runnable (sp is always 16-byte aligned)" \
-"\n  dc ivac, x1 // Without this, an old value of runnable is read" \
+    "\n  dc ivac, x1 // Without this, an old value of runnable is read" \
     "\n  mrs x0, CurrentEL" \
     "\n  tbnz x0, #2, in_el3" \
 \
@@ -401,12 +401,16 @@ show( scr_el3 );
     "\n  and x2, x2, #%[lomem_bits]" \
 \
     "\n  ldr x1, [x2, #%[partner]] // x0 = lowmem address of non-secure thread, x1 = secure partner" \
-    "\n  mrs x2, esr_el2" \
-    "\n  mrs x3, far_el2" \
     "\n  and x1, x1, #%[lomem_bits] // lowmem address of secure partner" \
-    "\n  stp x2, x3, [x1, #%[regs]]" \
+    "\n  add x1, x1, #%[regs]" \
+    "\n  dc ivac, x1 // Without this, the registers aren't updated" \
+    "\n  mrs x2, elr_el2" \
+    "\n  mrs x3, esr_el2" \
+    "\n  stp x2, x3, [x1]" \
+    "\n  mrs x2, far_el2" \
     "\n  mrs x3, hpfar_el2" \
-    "\n  str x3, [x1, #%[regs]+16]" \
+    "\n  stp x2, x3, [x1, #16]" \
+    "\n  dc civac, x1 // Without this, the registers aren't updated" \
 \
     "\n  ldp x2, x3, [sp, #16]" \
     "\n  ldp x0, x1, [sp], #32" \

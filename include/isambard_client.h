@@ -234,7 +234,6 @@ struct ippolas_veneer_data {
         "\n\tldr x16, [x17, #8]" \
         "\n\tsub sp, x16, #"ENSTRING( STORED_REGISTER_SPACE ) \
         RESTORE_CALLEE_SAVED_REGISTERS \
-"\nmov x27, x0" \
         RELEASE_LOCK \
         "\n\tsvc #"ENSTRING( ISAMBARD_EXCEPTION ) \
         \
@@ -270,6 +269,6 @@ extern void Isambard_40( integer_register o, uint32_t call, integer_register p1,
 extern integer_register Isambard_41( integer_register o, uint32_t call, integer_register p1, integer_register p2, integer_register p3, integer_register p4 );
 
 // For Virtual Machine implementations
-// FIXME Return various _EL2 register values, so exception can be handled
-extern void switch_to_partner( void (*exception_handler)( uint32_t syndrome, uint64_t fa, uint64_t ipa ) );
+typedef uint64_t (*vm)( uint64_t pc, uint64_t syndrome, uint64_t fault_address, uint64_t intermediate_physical_address );
+extern uint64_t switch_to_partner( vm handler, uint64_t pc );
 
