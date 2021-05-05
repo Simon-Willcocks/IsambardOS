@@ -80,10 +80,10 @@ integer_register unknown_call( integer_register call )
 asm ( ".section .text"
     GLOBAL_FUNCTION( switch_to_partner )
     "\n\tstp x29, x30, [sp, #-32]!"
-    "\n\t//stp x0, x1, [sp, #16]"
+    "\n\tstp x0, x1, [sp, #16]"
     "\n\tsvc " ENSTRING( ISAMBARD_SWITCH_TO_PARTNER )
-    "\n\t//ldp x16, x17, [sp, #16]"
-    "\n\t//blr x16"
+    "\n\tldp x16, x17, [sp, #16]"
+    "\n\tblr x16"
     "\n\tldp x29, x30, [sp], #32"
     "\n\tret"
     "\n.previous" );

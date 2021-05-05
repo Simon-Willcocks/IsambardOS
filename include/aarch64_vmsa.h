@@ -58,21 +58,21 @@ typedef union {
 
 static Aarch64_VMSA_entry const Aarch64_VMSA_invalid = { .raw = 0 }; // Not the only invalid value, but guaranteed invalid.
 
-static inline Aarch64_VMSA_entry Aarch64_VMSA_page_at( uint64_t physical )
+static inline Aarch64_VMSA_entry __attribute__(( always_inline )) Aarch64_VMSA_page_at( uint64_t physical )
 {
   Aarch64_VMSA_entry result = { .raw = physical };
   result.type = 3;
   return result;
 }
 
-static inline Aarch64_VMSA_entry Aarch64_VMSA_subtable_at( Aarch64_VMSA_entry *physical )
+static inline Aarch64_VMSA_entry __attribute__(( always_inline )) Aarch64_VMSA_subtable_at( Aarch64_VMSA_entry *physical )
 {
   Aarch64_VMSA_entry result = { .raw = (uint64_t) physical };
   result.type = 3;
   return result;
 }
 
-static inline Aarch64_VMSA_entry Aarch64_VMSA_block_at( uint64_t physical )
+static inline Aarch64_VMSA_entry __attribute__(( always_inline )) Aarch64_VMSA_block_at( uint64_t physical )
 {
   Aarch64_VMSA_entry result = { .raw = physical };
   result.type = 1;

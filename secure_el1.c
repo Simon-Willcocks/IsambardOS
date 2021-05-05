@@ -1315,6 +1315,7 @@ thread_switch __attribute__(( noinline )) SEL1_LOWER_AARCH64_IRQ_CODE( void *opa
   }
   return result;
 }
+
 thread_switch __attribute__(( noinline )) SEL1_LOWER_AARCH64_SERROR_CODE( void *opaque, thread_context *thread )
 {
   thread_switch result = { .then = thread, .now = thread };

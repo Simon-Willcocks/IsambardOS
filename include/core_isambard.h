@@ -76,10 +76,10 @@ struct isambard_core {
   struct isambard_core *low_virtual_address;       // Virtual address of this struct, offset from _start
   // Virtual machine
   struct {
-    uint64_t data[4];
+    uint64_t data[8];
   } __attribute__(( aligned( 16 ) )) el2_stack;
   struct {
-    uint64_t data[6];
+    uint64_t data[8];
   } __attribute__(( aligned( 16 ) )) el3_stack;
   // Keep the following at the top of a page (CORE_STACK_SIZE is calculated by build.sh)
   uint64_t __attribute__(( aligned( 16 ) )) stack[CORE_STACK_SIZE];

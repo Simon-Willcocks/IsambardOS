@@ -194,9 +194,21 @@ void __attribute__(( noreturn, noinline, optimize( "-Os" ) )) el1_enter_thread( 
 {
   integer_register spsr = threads.now->spsr;
   integer_register pc = threads.now->pc;
-  if (0 != (spsr & 0x10) && 0 != threads.now->partner) {
-    // Switch to EL3, to switch to EL2
-    asm ( "smc 0" );
+  if (0 != (spsr & 0x10) || ((spsr & 0x1e) == 8)) {
+    // Switch to EL3, to switch to Non-Secure
+    // This can be due to a ISAMBARD_SWITCH_TO_PARTNER SVC, or returning from an IRQ/FIQ
+    if (0 == threads.now->partner) {
+      asm ( "mov x28, %[reg]\nmov x29, %[then]\nsmc 3" : : [reg] "r" (threads.now), [then] "r" (threads.then) );
+    }
+    uint64_t runnable;
+    asm ( "mov %[r], sp\norr %[r], %[r], #0xff0\nldr %[r], [%[r], #8]" : [r] "=r" (runnable) );
+    if (runnable != threads.now) {
+      asm ( "mov x27, %[r]\nsmc 0x99" : : [r] "r" (runnable) );
+    }
+    if (0xfffffffffe1feb80ull == (uint64_t) threads.now) {
+      asm ( "mov x27, %[r]\nsmc 0x98" : : [r] "r" (runnable) );
+    }
+    asm ( "dsb sy\nsmc 0" );
   }
   // Load thread.now.pc, thread.now.spsr
   asm volatile ( "msr elr_el1, %[pc]"

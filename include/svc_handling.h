@@ -5,6 +5,10 @@ static inline thread_switch handle_svc_gate( Core *core, thread_context *thread 
 {
   thread_switch result = { .then = thread, .now = thread }; // By default, stay with the same thread
 
+if (thread->partner == 0 && ((thread->spsr & 0x1e) == 8 || 0 != (thread->spsr & 0x10))) {
+  asm ( "smc 5" );
+}
+
   static const int32_t THREAD_WAITING = -1;
 
   // Thread parameter x0: 0 = this thread should wait, <>0 thread to wake
@@ -552,9 +556,7 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
     {
       if (thread->partner == 0) BSOD( __COUNTER__ );
       if (thread->current_map != thread->partner->current_map) BSOD( __COUNTER__ );
-if (thread->partner != (void*) 0xfffffffffe1fe990ull) {
-  asm ( "smc 8" );
-}
+
       thread->partner->next = thread->next;
       thread->partner->prev = thread->prev;
       thread->next->prev = thread->partner;

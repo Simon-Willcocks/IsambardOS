@@ -7,6 +7,12 @@
 
 #include "kernel.h"
 #include "kernel_translation_tables.h"
+#include "isambard_syscalls.h"
+
+#ifndef ENSTRING
+#define ENSTRING2( n ) #n
+#define ENSTRING( n ) ENSTRING2( n )
+#endif
 
 #define numberof( a ) (sizeof( a ) / sizeof( a[0] ))
 
@@ -273,14 +279,7 @@ show( scr_el3 );
 // x1 points to where core and runnable are stored (himem address)
 
 #define AARCH64_VECTOR_TABLE_NEVER_SP0_CODE asm ( \
-    "\nin_el3: // x1 points to core, runnable, no other registers are meaningful" \
-\
-    "\n  add sp, sp, #16 // Don't care what those registers were, but reset sp" \
-\
-"\n mrs x2, sp_el1" \
-"\n and x2, x2, #0xfff" \
-"\n cmp x2, #0xff0" \
-"\n b.ne bsod" \
+    "\nin_el3: // x1 points to core, runnable, original x0-x3 are stacked" \
 \
     "\n  mrs x2, esr_el3" \
     "\n  mov x3, #0x5e000000" \
@@ -292,33 +291,65 @@ show( scr_el3 );
     "\n  eor x3, x3, #0x100 // HCE" \
     "\n  msr scr_el3, x3" \
     "\n  tbnz x3, #0, switch_to_non_secure" \
-    "\n  // Switch to secure mode" \
+\
+    "\n  stp x4, x5, [sp, #-16]! // Push x4 and x5 as well" \
+\
+    "\n  // Switch to secure mode, and partner thread" \
     "\n  mov x0, x30" \
     "\n  bl restore_secure_system_regs" \
     "\n  mov x30, x0" \
-    "\nrun_thread: // Drops straight to whichever EL < 2, skipping EL2" \
+\
+    "\n  mrs x2, elr_el2" \
+    "\n  msr elr_el1, x2" \
+    "\n  mrs x3, spsr_el2" \
+    "\n  msr spsr_el1, x3" \
+    "\n  // Make a switch to partner call on secure EL1" \
+    "\n  mov x0, #0x56000000" \
+    "\n  movk x0, #"ENSTRING( ISAMBARD_SWITCH_TO_PARTNER ) \
+    "\n  msr esr_el1, x0" \
+\
+    "\n  mrs x0, vbar_el1" \
+    "\n  add x0, x0, #VBAR_EL23_LOWER_AARCH64_SYNC - VBAR_EL23" \
+    "\n  msr elr_el3, x0" \
+\
+    "\n  mov x0, #0x3c5" \
+    "\n  msr spsr_el3, x0" \
+    "\n  ldp x4, x5, [sp], #16 // Pop x4, x5" \
+\
+    "\n  ldp x2, x3, [sp, #16] // Pop x0-3 pushed before calling in_el3" \
+    "\n  ldp x0, x1, [sp], #32" \
+\
+    "\n  eret" \
+\
+    "\nswitch_to_non_secure:" \
+    "\n  add sp, sp, #32 // stacked registers not needed" \
+    "\n  mov x4, #1 // FIXME: only one VM supported, need to get required VMID to this code" \
+    ); \
+    LOAD_VM_SYSTEM_REGS \
+    asm ( \
+    "\n  // Drop straight to non-secure EL < 2, skipping EL2" \
     "\n  ldr x0, [x1, #8]" \
     "\n  and x0, x0, #%[lomem_bits]" \
     "\n  ldp x2, x3, [x0, #%[pc]] // Includes never-used gate value" \
     "\n  msr elr_el3, x2" \
     "\n  msr spsr_el3, x3" \
     "\n" \
-    load_pair( 2, 3 ) \
-    load_pair( 4, 5 ) \
-    load_pair( 6, 7 ) \
-    load_pair( 8, 9 ) \
-    load_pair( 10, 11 ) \
-    load_pair( 12, 13 ) \
-    load_pair( 14, 15 ) \
-    load_pair( 16, 17 ) \
-    load_pair( 18, 19 ) \
-    load_pair( 20, 21 ) \
-    load_pair( 22, 23 ) \
-    load_pair( 24, 25 ) \
-    load_pair( 26, 27 ) \
-    load_pair( 28, 29 ) \
+    load_pair( x0, 2, 3 ) \
+    load_pair( x0, 4, 5 ) \
+    load_pair( x0, 6, 7 ) \
+    load_pair( x0, 8, 9 ) \
+    load_pair( x0, 10, 11 ) \
+    load_pair( x0, 12, 13 ) \
+    load_pair( x0, 14, 15 ) \
+    load_pair( x0, 16, 17 ) \
+    load_pair( x0, 18, 19 ) \
+    load_pair( x0, 20, 21 ) \
+    load_pair( x0, 22, 23 ) \
+    load_pair( x0, 24, 25 ) \
+    load_pair( x0, 26, 27 ) \
+    load_pair( x0, 28, 29 ) \
     "\n  ldr x30, [x0, #%[regs] + 30 * 8]" \
-    load_pair( 0, 1 ) \
+    load_pair( x0, 0, 1 ) \
     "\n  eret" \
     : : \
         [regs] "i" (&((thread_context*)0)->regs), \
@@ -326,22 +357,6 @@ show( scr_el3 );
         [lomem_bits] "i" (lomem_bits) \
     ); \
     asm ( \
-    "\nswitch_to_non_secure:" \
-"\n  mov x1, sp" \
-"\n  orr x1, x1, #0xff0" \
-"\n mov w5, #0xe990" \
-"\n movk w5, #0xfe1f, lsl #16" \
-"\n ldr w0, [x1, #8]" \
-"\n cmp w5, w0" \
-"\n b.eq 1f" \
-"\n mov x27, x0" \
-"\n smc 6" \
-"\n1:" \
-    "\n  mov x4, #1 // FIXME: only one VM supported, need to get required VMID to this code" \
-    ); \
-    LOAD_VM_SYSTEM_REGS \
-    asm ( \
-    "\n  b run_thread" \
     "\nrestore_secure_system_regs:" \
     ); \
     SAVE_VM_SYSTEM_REGS \
@@ -357,109 +372,60 @@ show( scr_el3 );
     "\n  mov x1, sp" \
     "\n  orr x1, x1, #0xff0" \
     "\n  mov sp, x1" \
-    "\n  b c_bsod" \
-    "\nstore_el2_exception:" \
-\
-    "\n  ldr x1, [x0, #%[partner]] // x0 = lowmem address of non-secure thread, x1 = secure partner" \
-    "\n  mrs x2, esr_el2" \
-    "\n  mrs x3, far_el2" \
-    "\n  and x4, x1, #%[lomem_bits] // x4 = lowmem address of x1" \
-    "\n  stp x2, x3, [x4, #%[regs]]" \
-    "\n  mrs x3, hpfar_el2" \
-    "\n  str x3, [x4, #%[regs]+16]" \
-    "\n  ldp x2, x3, [x0, #%[next]] // next, prev" \
-    "\n  stp x2, x3, [x4, #%[next]] // next, prev" \
-    "\n  and x5, x2, #%[lomem_bits] // x5 = lowmem address of next" \
-    "\n  and x6, x3, #%[lomem_bits] // x6 = lowmem address of prev" \
-    "\n  str x1, [x6, #%[next]]     // prev->next = secure partner" \
-    "\n  str x1, [x5, #%[next]+8]   // next->prev = secure partner" \
-    "\n  // Note, this does not fix up the non-secure thread's next, prev" \
-    "\n  mov x3, sp" \
-    "\n  orr x3, x3, #0xff0 // x3 -> core, runnable" \
-    "\n  str x1, [x3, #8] // New runnable" \
-    "\n  smc #0 // Ask EL3 to switch modes" \
-    : : \
-        [partner] "i" (&((thread_context*)0)->partner), \
-        [regs] "i" (&((thread_context*)0)->regs), \
-        [next] "i" (&((thread_context*)0)->next), \
-        [lomem_bits] "i" (lomem_bits) \
-    );
+    "\n  b c_bsod" );
 
 #define AARCH64_VECTOR_TABLE_SPX_IRQ_CODE asm ( "bl bsod" );
 #define AARCH64_VECTOR_TABLE_SPX_FIQ_CODE asm ( "bl bsod" );
 #define AARCH64_VECTOR_TABLE_SPX_SERROR_CODE asm ( "bl bsod" );
 
 // Store a pair of registers, the low value should be even
-#define store_pair( low, high ) "\n  stp x"#low", x"#high", [x0, #%[regs] + "#low" * 8]"
-#define load_pair( low, high ) "\n  ldp x"#low", x"#high", [x0, #%[regs] + "#low" * 8]"
+#define store_pair( thread, low, high ) "\n  stp x"#low", x"#high", ["#thread", #%[regs] + "#low" * 8]"
+#define load_pair( thread, low, high ) "\n  ldp x"#low", x"#high", ["#thread", #%[regs] + "#low" * 8]"
 
 // Note: the lomem_bits line would be better with an add instruction, but
 // the constant is then out of range
 
 #define AARCH64_VECTOR_TABLE_LOWER_AARCH64_SYNC_CODE \
   asm ( \
-        "stp x0, x1, [sp, #-16]!" \
+    "\n  stp x0, x1, [sp, #-32]!" \
+    "\n  stp x2, x3, [sp, #16]" \
+\
     "\n  mov x1, sp" \
     "\n  orr x1, x1, #0xff0 // x1 points to core->core, core->runnable (sp is always 16-byte aligned)" \
+"\n  dc ivac, x1 // Without this, an old value of runnable is read" \
     "\n  mrs x0, CurrentEL" \
-    "\n  // tbnz x0, #2, in_el3" \
-"\n  cmp x0, #0xc\n b.eq in_el3" \
-"\n  cmp x0, #0x8\n b.eq 1f\n smc 48\n1:\n" \
-    \
-    "\n  // In EL2: store state and switch modes" \
-    "\n  ldr x0, [x1, #8]" \
-    "\n  and x0, x0, #%[lomem_bits]" \
+    "\n  tbnz x0, #2, in_el3" \
 \
-"\n // mov w5, #0xe990" \
-"\n // movk w5, #0x1f, lsl #16" \
-"\n // cmp w5, w0" \
-"\n // b.eq 1f" \
-"\n // mov x27, x0" \
-"\n // mov x28, x1" \
-"\n // ldp x24, x25, [x1]" \
-"\n // smc 7" \
-"\n1:" \
-    store_pair( 2, 3 ) \
-    "\n  ldp x2, x3, [sp], #16 // Restores SP_EL2" \
-    "\n  stp x2, x3, [x0, #%[regs]]" \
-    store_pair( 4, 5 ) \
-    store_pair( 6, 7 ) \
-    store_pair( 8, 9 ) \
-    store_pair( 10, 11 ) \
-    store_pair( 12, 13 ) \
-    store_pair( 14, 15 ) \
-    store_pair( 16, 17 ) \
-    store_pair( 18, 19 ) \
-    store_pair( 20, 21 ) \
-    store_pair( 22, 23 ) \
-    store_pair( 24, 25 ) \
-    store_pair( 26, 27 ) \
-    store_pair( 28, 29 ) \
-    "\n  str x30, [x0, #%[regs] + 30 * 8]" \
-    "\n  // mrs x2, elr_el2" \
-    "\n  // mrs x3, spsr_el2" \
-    "\n  // stp x2, x3, [x0, #%[pc]] // Clobbers never-used gate value" \
-    "\n  b store_el2_exception" \
+    "\n  // In EL2: store details, and fake a switch to partner call at secure EL1, via EL3" \
+    "\n  ldr x2, [x1, #8] // core->runnable (himem)" \
+    "\n  and x2, x2, #%[lomem_bits]" \
+\
+    "\n  ldr x1, [x2, #%[partner]] // x0 = lowmem address of non-secure thread, x1 = secure partner" \
+    "\n  mrs x2, esr_el2" \
+    "\n  mrs x3, far_el2" \
+    "\n  and x1, x1, #%[lomem_bits] // lowmem address of secure partner" \
+    "\n  stp x2, x3, [x1, #%[regs]]" \
+    "\n  mrs x3, hpfar_el2" \
+    "\n  str x3, [x1, #%[regs]+16]" \
+\
+    "\n  ldp x2, x3, [sp, #16]" \
+    "\n  ldp x0, x1, [sp], #32" \
+\
+    "\n  smc #0 // Ask EL3 to switch to partner" \
     : : \
+        [partner] "i" (&((thread_context*)0)->partner), \
         [regs] "i" (&((thread_context*)0)->regs), \
-        [pc] "i" (&((thread_context*)0)->pc), \
         [lomem_bits] "i" (lomem_bits) \
-  );
+    );
 
 
 #define REDIRECT_INTERRUPT_TO_SECURE_EL1 \
   asm ( "0:" \
-    "\n  stp x0, x1, [sp, #-16]!" \
-    "\n  stp x2, x3, [sp, #-16]!" \
-    "\n  stp x4, x5, [sp, #-16]!" \
+    "\n  stp x0, x1, [sp, #-48]!" \
+    "\n  stp x2, x3, [sp, #16]" \
+    "\n  stp x4, x5, [sp, #32]" \
     "\n  mov x1, sp" \
     "\n  orr x1, x1, #0xff0 // x1 points to core->core, core->runnable (sp is always 16-byte aligned)" \
-\
-"\n ldr x4, [x1, #8]" \
-"\n mov w5, #0xe990" \
-"\n movk w5, #0xfe1f, lsl #16" \
-"\n cmp w5, w4" \
-"\n b.ne bsod" \
 \
     "\n  mov x0, x30" \
     "\n  bl restore_secure_system_regs" \
@@ -468,9 +434,11 @@ show( scr_el3 );
     "\n  msr elr_el1, x0" \
     "\n  mrs x0, spsr_el3" \
     "\n  msr spsr_el1, x0" \
+\
     "\n  mrs x0, vbar_el1" \
     "\n  add x0, x0, #0b - VBAR_EL23" \
     "\n  msr elr_el3, x0" \
+\
     "\n  // Toggle security state, IRQ, FIQ routing" \
     "\n  mrs x0, scr_el3" \
     "\n  eor x0, x0, #0x007 // FIQ. IRQ, NS" \
@@ -478,9 +446,9 @@ show( scr_el3 );
     "\n  msr scr_el3, x0" \
     "\n  mov x0, #0x3c5" \
     "\n  msr spsr_el3, x0" \
-    "\n  ldp x4, x5, [sp], #16" \
-    "\n  ldp x2, x3, [sp], #16" \
-    "\n  ldp x0, x1, [sp], #16" \
+    "\n  ldp x4, x5, [sp, #32]" \
+    "\n  ldp x2, x3, [sp, #16]" \
+    "\n  ldp x0, x1, [sp], #48" \
     "\n  eret" );
 
 #define AARCH64_VECTOR_TABLE_LOWER_AARCH64_IRQ_CODE REDIRECT_INTERRUPT_TO_SECURE_EL1

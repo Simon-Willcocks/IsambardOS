@@ -27,9 +27,9 @@ TRIVIAL_NUMERIC_DISPLAY tnd = {};
 
 void vm_exception_handler( uint32_t syndrome, uint64_t fa, uint64_t ipa )
 {
-  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 800 ), N( 200 ), N( syndrome ), N( 0xfffff0f0 ) );
-  TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 800 ), N( 210 ), N( fa ), N( 0xfffff0f0 ) );
-  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 800 ), N( 220 ), N( ipa ), N( 0xfffff0f0 ) );
+  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 200 ), N( syndrome ), N( 0xfffff0f0 ) );
+  TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1400 ), N( 210 ), N( fa ), N( 0xfffff0f0 ) );
+  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 220 ), N( ipa ), N( 0xfffff0f0 ) );
   asm ( "svc 0" );
 }
 
@@ -89,9 +89,9 @@ static void timer_thread()
   uint32_t count = 0;
   for (;;) {
     // Insufficient asm volatile ( "dc civac, %[va]" : : [va] "r" (&arm_code[0x100]) );
-    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 1000 ), NUMBER__from_integer_register( arm_code[0x100] ), N( 0xffffffff ) );
-    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 1010 ), NUMBER__from_integer_register( count++ ), N( 0xffffffff ) );
-    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 1020 ), NUMBER__from_integer_register( this_thread ), N( 0xffffffff ) );
+    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 1000 ), NUMBER__from_integer_register( arm_code[0x100] ), N( 0xffff0000 | (count & 15) * 0x1020 ) );
+    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 1010 ), NUMBER__from_integer_register( count++ ), N( 0xffffffff ) );
+    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 1020 ), NUMBER__from_integer_register( this_thread ), N( 0xffffffff ) );
     asm ( "svc 0" );
     sleep_ms( 25 );
   }
@@ -133,7 +133,7 @@ static bool image_is_valid()
   arm_code[i++] = 0xe5812000; // str	r2, [r1]
 
 
-  //arm_code[i++] = 0xe3a0947f; // mov r9, #0x7f000000
+  arm_code[i++] = 0xe3a0947f; // mov r9, #0x78000000
   arm_code[i++] = 0xe3a01000; // mov	r1, #0
   int loop = i;
                               // loop:
