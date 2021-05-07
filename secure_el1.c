@@ -1091,6 +1091,8 @@ static thread_switch system_driver_request( Core *core, thread_context *thread )
       thread->partner = partner;
       initialise_new_thread( thread->partner );
       partner->partner = thread;
+      asm ( "dc civac, %[va]" : : [va] "r" (&partner->partner) );
+      asm ( "dc civac, %[va]" : : [va] "r" (&thread->partner) );
       // This is the secure map, it is the only one that is allowed to switch
       // between partners.
       partner->current_map = thread->stack_pointer[0].caller_map;

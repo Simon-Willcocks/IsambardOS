@@ -585,6 +585,51 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
       }
     }
     return result;
+  case ISAMBARD_GET_PARTNER_REG:
+    {
+      thread_context *partner = thread->partner;
+      unsigned int register_index = thread->regs[0];
+
+      if (partner == 0) BSOD( __COUNTER__ );
+      if (thread->current_map != partner->current_map) BSOD( __COUNTER__ );
+      if (register_index > 31) BSOD( __COUNTER__ ); // Register code, takes care of _svc registers, etc.
+
+      integer_register spsr = partner->spsr;
+      if (0 != (spsr & 0x10) || ((spsr & 0x1e) == 8)) {
+        // partner thread WILL be waiting to be re-started
+
+        asm ( "dc ivac, %[r]" : : [r] "r" (&partner->regs[register_index]) );
+        thread->regs[0] = partner->regs[register_index];
+      }
+      else {
+        // The non-secure code doesn't call this
+        BSOD( __COUNTER__ );
+      }
+    }
+    return result;
+  case ISAMBARD_SET_PARTNER_REG:
+    {
+      thread_context *partner = thread->partner;
+      unsigned int register_index = thread->regs[0];
+
+      if (partner == 0) BSOD( __COUNTER__ );
+      if (thread->current_map != partner->current_map) BSOD( __COUNTER__ );
+      if (register_index > 31) BSOD( __COUNTER__ ); // Register code, takes care of _svc registers, etc.
+
+      integer_register spsr = partner->spsr;
+      if (0 != (spsr & 0x10) || ((spsr & 0x1e) == 8)) {
+        // partner thread WILL be waiting to be re-started
+
+        asm ( "dc ivac, %[r]" : : [r] "r" (&partner->regs[register_index]) );
+        partner->regs[register_index] = thread->regs[1];
+        asm ( "dc civac, %[r]" : : [r] "r" (&partner->regs[register_index]) );
+      }
+      else {
+        // The non-secure code doesn't call this
+        BSOD( __COUNTER__ );
+      }
+    }
+    return result;
   case ISAMBARD_SYSTEM_REQUEST:
     return system_driver_request( core, thread );
   default: BSOD( __COUNTER__ );

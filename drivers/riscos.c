@@ -5,8 +5,6 @@
 #include "drivers.h"
 #include "aarch64_vmsa.h"
 
-#define QEMU
-
 ISAMBARD_INTERFACE( BLOCK_DEVICE )
 #include "interfaces/client/BLOCK_DEVICE.h"
 
@@ -183,19 +181,241 @@ static bool image_is_valid()
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( top - 20 ), N( timer1.r - timer0.r ), N( 0xfffff0f0 ) );
 
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 180 ), N( top - 10 ), NUMBER__from_integer_register( crc ), N( 0xffffffff ) );
+
+  uint32_t *arm_code = (void *) ro_address.r;
+  arm_code[0x2000] = 0xeafffffe; // 0: b 0b
+
   return (crc == expected_crc);
 #endif
 }
 
+typedef union {
+  uint32_t raw;
+  struct {
+    uint32_t is_read:1;
+    uint32_t CRm:4;
+    uint32_t Rt:5;
+    uint32_t CRn:4;
+    uint32_t Opc1:3;
+    uint32_t Opc2:3;
+    uint32_t COND:4;
+    uint32_t CV:1;
+  };
+} copro_syndrome;
+
+#define READ_ONLY( n ) if (cp.is_read) set_partner_register( cp.Rt, n ); else asm ( "brk 1" );
+#define READ_WRITE( n ) { static uint64_t v = n; if (cp.is_read) set_partner_register( cp.Rt, v ); else v = get_partner_register( cp.Rt ); }
+
+static void cp15_access( uint32_t syndrome )
+{
+  copro_syndrome cp = { .raw = syndrome };
+
+  // 0fe00241 mrc     15, 0, lr, cr0, cr0, {0}
+
+  // The following switch statements follow the order mappings are listed in G6.3.1, etc.
+  // The order is different in cp14!
+  // Most of the constants have been taken from qemu-5.2.
+  switch (cp.CRn) {
+  case 0: // ID registers
+    switch (cp.Opc1) {
+    case 0:
+      switch (cp.CRm) {
+      case 0:
+        {
+        switch (cp.Opc2) {
+        case 0:
+          READ_ONLY( 0x410fc075 ); // midr
+          break;
+        case 5:
+          READ_ONLY( 0x80000f00 ); // mpidr
+          break;
+
+        default: asm ( "brk 1" );
+        }
+        }
+        break;
+      default: asm ( "brk 1" );
+      }
+      break;
+    default: asm ( "brk 1" );
+    }
+    break;
+  case 1: // System control registers
+    switch (cp.Opc1) {
+    case 0:
+      switch (cp.CRm) {
+      case 0:
+        {
+        switch (cp.Opc2) {
+        case 0:
+          READ_WRITE( 0x701fe00a ); // ccsidr, what does a write do?
+          break;
+
+        default: asm ( "brk 1" );
+        }
+        }
+        break;
+      default: asm ( "brk 1" );
+      }
+      break;
+    default: asm ( "brk 1" );
+    }
+    break;
+  case 2: // Memory system control registers
+  case 3: // Memory system control registers
+  case 4: // GIC, system control registers, Debug exception registers
+  case 5: // Memory system fault registers
+  case 6: // Memory system fault registers
+  case 7: // Cache maintenance, address translations, legacy operations
+    switch (cp.Opc1) {
+    case 0:
+      switch (cp.CRm) {
+      case 5:
+        {
+        switch (cp.Opc2) {
+        case 4:
+          // CP15ISB - isb, why?
+          break;
+        default: asm ( "brk 1" );
+        }
+        }
+        break;
+      default: asm ( "brk 1" );
+      }
+      break;
+    default: asm ( "brk 1" );
+    }
+    break;
+  case 8: // TLB maintenance operations
+  case 9: // Performance monitors
+  case 10: // Memory mapping registers and TLB operations
+  case 11: // Reserved for DMA operations for TCM access
+  case 12: // System control registers, GIC System registers *
+  case 13: // Process, Context, and Thread ID registers
+  case 14: // Generic Timer registers *, Performance Monitors registers
+  case 15: // IMPLEMENTATION DEFINED registers
+  default: asm ( "brk 1" );
+  }
+}
+
+static void cp14_access( uint32_t syndrome )
+{
+  copro_syndrome cp = { .raw = syndrome };
+
+  // 0fe00241 mrc     15, 0, lr, cr0, cr0, {0}
+
+  // The following switch statements follow the order mappings are listed in G6.2.1, etc.
+  switch (cp.Opc1) {
+  case 0:
+    switch (cp.CRn) {
+    case 0:
+      switch (cp.Opc2) {
+      case 0:
+        switch (cp.CRm) {
+        case 0:
+          break;
+        default: asm ( "brk 1" );
+        }
+        break;
+      default: asm ( "brk 1" );
+      }
+      break;
+    default: asm ( "brk 1" );
+    }
+    break;
+  default: asm ( "brk 1" );
+  }
+}
+
+static void cp15_access_RR( uint32_t syndrome ) { asm ( "brk 1" ); }
+static void ldstc( uint32_t syndrome ) { asm ( "brk 1" ); }
+static void fpaccess( uint32_t syndrome ) { asm ( "brk 1" ); }
+static void vmrs_access( uint32_t syndrome ) { asm ( "brk 1" ); }
+static void pointer_authentication( uint32_t syndrome ) { asm ( "brk 1" ); }
+static void cp14_access_RR( uint32_t syndrome ) { asm ( "brk 1" ); }
+static void illegal_execution_state( uint32_t syndrome ) { asm ( "brk 1" ); }
+static void hvc32( uint32_t syndrome ) { asm ( "brk 1" ); }
+static void smc32( uint32_t syndrome ) { asm ( "brk 1" ); }
+
 uint64_t vm_handler( uint64_t pc, uint64_t syndrome, uint64_t fault_address, uint64_t intermediate_physical_address )
 {
   static int count = 0;
+  uint64_t new_pc = pc; // Retry instruction by default
+
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 200 ), N( syndrome ), N( 0xffff8080 ) );
   TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1400 ), N( 210 ), N( fault_address ), N( 0xffff8080 ) );
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 220 ), N( intermediate_physical_address ), N( 0xffff8080 ) );
   TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1400 ), N( 230 ), N( pc ), N( 0xfffff0f0 ) );
   TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1400 ), N( 240 ), N( count++ ), N( 0xfffff0f0 ) );
-  return pc + 4;
+asm ( "svc 0" );
+  switch (syndrome >> 26) {
+  case 0b000000: asm ( "brk 0b000000" ); break; // Never happens or is unimplemented
+  case 0b000001: wait_until_woken(); break; // WFI or WFE
+  case 0b000010: asm ( "brk 0b000010" ); break; // Never happens or is unimplemented
+  case 0b000011: cp15_access( syndrome & 0x1fffff ); new_pc += 4; break;
+  case 0b000100: cp15_access_RR( syndrome & 0x1fffff ); new_pc += 4; break;
+  case 0b000101: cp14_access( syndrome & 0x1fffff ); new_pc += 4; break;
+  case 0b000110: ldstc( syndrome & 0x1fffff ); new_pc += 4; break;
+  case 0b000111: fpaccess( syndrome & 0x1fffff ); new_pc += 4; break;
+  case 0b001000: vmrs_access( syndrome & 0x1fffff ); new_pc += 4; break;
+  case 0b001001: pointer_authentication( syndrome & 0x1fffff ); new_pc += 4; break;
+  case 0b001010: asm ( "brk 0b001010" ); break; // Never happens or is unimplemented
+  case 0b001011: asm ( "brk 0b001011" ); break; // Never happens or is unimplemented
+  case 0b001100: cp14_access_RR( syndrome & 0x1fffff ); new_pc += 4; break;
+  case 0b001101: asm ( "brk 0b001101" ); break; // Never happens or is unimplemented
+  case 0b001110: illegal_execution_state( syndrome & 0x1fffff ); new_pc += 4; break;
+  case 0b001111: asm ( "brk 0b001111" ); break; // Never happens or is unimplemented
+  case 0b010000: asm ( "brk 0b010000" ); break; // Never happens or is unimplemented
+  case 0b010001: asm ( "brk 0b010001" ); break; // Never happens or is unimplemented
+  case 0b010010: hvc32( syndrome & 0x1fffff ); new_pc += 4; break;
+  case 0b010011: smc32( syndrome & 0x1fffff ); new_pc += 4; break;
+  case 0b010100: asm ( "brk 0b010100" ); break; // Never happens or is unimplemented
+  case 0b010101: asm ( "brk 0b010101" ); break; // Never happens or is unimplemented
+  case 0b010110: asm ( "brk 0b010110" ); break; // Never happens or is unimplemented
+  case 0b010111: asm ( "brk 0b010111" ); break; // Never happens or is unimplemented
+  case 0b011000: asm ( "brk 0b011000" ); break; // Never happens or is unimplemented
+  case 0b011001: asm ( "brk 0b011001" ); break; // Never happens or is unimplemented
+  case 0b011010: asm ( "brk 0b011010" ); break; // Never happens or is unimplemented
+  case 0b011011: asm ( "brk 0b011011" ); break; // Never happens or is unimplemented
+  case 0b011100: asm ( "brk 0b011100" ); break; // Never happens or is unimplemented
+  case 0b011101: asm ( "brk 0b011101" ); break; // Never happens or is unimplemented
+  case 0b011110: asm ( "brk 0b011110" ); break; // Never happens or is unimplemented
+  case 0b011111: asm ( "brk 0b011111" ); break; // Never happens or is unimplemented
+  case 0b100000: asm ( "brk 0b100000" ); break; // Never happens or is unimplemented
+  case 0b100001: asm ( "brk 0b100001" ); break; // Never happens or is unimplemented
+  case 0b100010: asm ( "brk 0b100010" ); break; // Never happens or is unimplemented
+  case 0b100011: asm ( "brk 0b100011" ); break; // Never happens or is unimplemented
+  case 0b100100: asm ( "brk 0b100100" ); break; // Never happens or is unimplemented
+  case 0b100101: asm ( "brk 0b100101" ); break; // Never happens or is unimplemented
+  case 0b100110: asm ( "brk 0b100110" ); break; // Never happens or is unimplemented
+  case 0b100111: asm ( "brk 0b100111" ); break; // Never happens or is unimplemented
+  case 0b101000: asm ( "brk 0b101000" ); break; // Never happens or is unimplemented
+  case 0b101001: asm ( "brk 0b101001" ); break; // Never happens or is unimplemented
+  case 0b101010: asm ( "brk 0b101010" ); break; // Never happens or is unimplemented
+  case 0b101011: asm ( "brk 0b101011" ); break; // Never happens or is unimplemented
+  case 0b101100: asm ( "brk 0b101100" ); break; // Never happens or is unimplemented
+  case 0b101101: asm ( "brk 0b101101" ); break; // Never happens or is unimplemented
+  case 0b101110: asm ( "brk 0b101110" ); break; // Never happens or is unimplemented
+  case 0b101111: asm ( "brk 0b101111" ); break; // Never happens or is unimplemented
+  case 0b110000: asm ( "brk 0b110000" ); break; // Never happens or is unimplemented
+  case 0b110001: asm ( "brk 0b110001" ); break; // Never happens or is unimplemented
+  case 0b110010: asm ( "brk 0b110010" ); break; // Never happens or is unimplemented
+  case 0b110011: asm ( "brk 0b110011" ); break; // Never happens or is unimplemented
+  case 0b110100: asm ( "brk 0b110100" ); break; // Never happens or is unimplemented
+  case 0b110101: asm ( "brk 0b110101" ); break; // Never happens or is unimplemented
+  case 0b110110: asm ( "brk 0b110110" ); break; // Never happens or is unimplemented
+  case 0b110111: asm ( "brk 0b110111" ); break; // Never happens or is unimplemented
+  case 0b111000: asm ( "brk 0b111000" ); break; // Never happens or is unimplemented
+  case 0b111001: asm ( "brk 0b111001" ); break; // Never happens or is unimplemented
+  case 0b111010: asm ( "brk 0b111010" ); break; // Never happens or is unimplemented
+  case 0b111011: asm ( "brk 0b111011" ); break; // Never happens or is unimplemented
+  case 0b111100: asm ( "brk 0b111100" ); break; // Never happens or is unimplemented
+  case 0b111101: asm ( "brk 0b111101" ); break; // Never happens or is unimplemented
+  case 0b111110: asm ( "brk 0b111110" ); break; // Never happens or is unimplemented
+  case 0b111111: asm ( "brk 0b111111" ); break; // Never happens or is unimplemented
+  }
+
+  return new_pc;
 }
 
 void entry()
@@ -232,11 +452,11 @@ void entry()
       entry = Aarch64_VMSA_L2_rwx( entry );
       tt[i] = entry;
     }
-
     DRIVER_SYSTEM__make_partner_thread( driver_system(), PHYSICAL_MEMORY_BLOCK__duplicate_to_pass_to( driver_system().r, el2_tt ) );
     uint64_t next_pc = 0;
     for (;;) {
       next_pc = switch_to_partner( vm_handler, next_pc );
+sleep_ms( 4000 );
     }
   }
 }

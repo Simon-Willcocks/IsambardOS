@@ -59,7 +59,7 @@ static const uint32_t vwidth = 1920;
 
 #include "raw/trivial_display.h"
 
-uint64_t c_bsod_regs[32] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 };
+uint64_t c_bsod_regs[34] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 };
 
 extern void invalidate_all_caches();
 
@@ -124,7 +124,7 @@ extern Aarch64_VMSA_entry kernel_tt_l2[16];
   }
   asm ( "dsb sy" );
 
-  for (int i = 0; i < 32; i++) { show_qword( 200, 120+20*i, c_bsod_regs[i], White ); }
+  for (int i = 0; i < 34; i++) { show_qword( 200, 120+20*i, c_bsod_regs[i], White ); }
   thread_context *runnable;
   asm ( "mov %[t], sp\norr %[t], %[t], #0xff0\nldr %[t], [%[t],#8]"
         : [t] "=&r" (runnable) );
@@ -169,6 +169,11 @@ show( elr_el2 );
 show( esr_el2 );
 show( spsr_el2 );
 show( sctlr_el2 );
+
+  uint64_t currentel;
+  asm ( "mrs %[r], CurrentEL" : [r] "=r" (currentel) );
+
+  if (currentel == 0xc) {
 show( sp_el2 );
 show( vbar_el2 );
 y += 20;
@@ -180,13 +185,14 @@ show( sctlr_el3 );
 show( vbar_el3 );
 y += 10;
 show( scr_el3 );
+  }
 
 // contextidr_el2, CPTR_EL2, DACR32_EL2, HACR_EL2, RMR_EL2, RMR_EL2, TPIDR_EL2; No use for these registers
 // ESR_EL2, FAR_EL2, HPFAR_EL2, IFSR32_EL2; passed to partner thread to inform of exceptions
 // sctlr_el2, tcr_el2, mair_el2, vbar_el2; Relates to Isambard VM implementation, doesn't change
 
   invalidate_all_caches();
-  for (;;) { asm ( "wfi" ); }
+  for (;;) { }
 }
 
 // Uses x3, x4, x5
@@ -369,6 +375,7 @@ show( scr_el3 );
     asm ( \
     "\n// NOT PART OF THE SPX_SYNC_CODE!" \
     "\nbsod: // We've had it, run some C code which never returns" \
+    "\n  msr DAIFSet, #0x3" \
     "\n  mov x1, sp" \
     "\n  orr x1, x1, #0xff0" \
     "\n  mov sp, x1" \
@@ -392,7 +399,8 @@ show( scr_el3 );
 \
     "\n  mov x1, sp" \
     "\n  orr x1, x1, #0xff0 // x1 points to core->core, core->runnable (sp is always 16-byte aligned)" \
-    "\n  dc ivac, x1 // Without this, an old value of runnable is read" \
+    "\n  dc ivac, x1 // Ensure access to runnable" \
+\
     "\n  mrs x0, CurrentEL" \
     "\n  tbnz x0, #2, in_el3" \
 \
@@ -400,6 +408,8 @@ show( scr_el3 );
     "\n  ldr x2, [x1, #8] // core->runnable (himem)" \
     "\n  and x2, x2, #%[lomem_bits]" \
 \
+    "\n  add x1, x2, #%[partner]" \
+    "\n  dc ivac, x1 // Ensure access to partner value is up to date" \
     "\n  ldr x1, [x2, #%[partner]] // x0 = lowmem address of non-secure thread, x1 = secure partner" \
     "\n  and x1, x1, #%[lomem_bits] // lowmem address of secure partner" \
     "\n  add x1, x1, #%[regs]" \

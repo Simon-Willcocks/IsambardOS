@@ -271,4 +271,6 @@ extern integer_register Isambard_41( integer_register o, uint32_t call, integer_
 // For Virtual Machine implementations
 typedef uint64_t (*vm)( uint64_t pc, uint64_t syndrome, uint64_t fault_address, uint64_t intermediate_physical_address );
 extern uint64_t switch_to_partner( vm handler, uint64_t pc );
+extern uint64_t get_partner_reg( int code );
+extern void set_partner_reg( int code, uint64_t value );
 

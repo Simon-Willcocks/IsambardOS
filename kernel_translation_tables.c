@@ -252,7 +252,7 @@ void el3_prepare_el2_for_entry( Core *core )
   // Some or all RW fields of this register have defined reset values. These apply
   // only if the PE resets into EL2 using AArch64. Otherwise, RW fields in this
   // register reset to architecturally UNKNOWN values. (Don't read-modify-write!)
-  sctlr2 |= (1 << 12) | (1 << 3) | (1 << 1) | (1 << 0);
+  sctlr2 |= (1 << 12) | (1 << 3) | (1 << 2) | (1 << 1) | (1 << 0);
   asm volatile ( "\tmsr SCTLR_EL2, %[bits]\n" : : [bits] "r" (sctlr2) );
 }
 

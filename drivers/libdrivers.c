@@ -88,3 +88,19 @@ asm ( ".section .text"
     "\n\tret"
     "\n.previous" );
 
+asm ( ".section .text"
+    GLOBAL_FUNCTION( get_partner_register )
+    "\n\tstp x29, x30, [sp, #-32]!"
+    "\n\tsvc " ENSTRING( ISAMBARD_GET_PARTNER_REG )
+    "\n\tldp x29, x30, [sp], #32"
+    "\n\tret"
+    "\n.previous" );
+
+asm ( ".section .text"
+    GLOBAL_FUNCTION( set_partner_register )
+    "\n\tstp x29, x30, [sp, #-32]!"
+    "\n\tsvc " ENSTRING( ISAMBARD_SET_PARTNER_REG )
+    "\n\tldp x29, x30, [sp], #32"
+    "\n\tret"
+    "\n.previous" );
+
