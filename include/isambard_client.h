@@ -271,6 +271,8 @@ extern integer_register Isambard_41( integer_register o, uint32_t call, integer_
 // For Virtual Machine implementations
 typedef uint64_t (*vm)( uint64_t pc, uint64_t syndrome, uint64_t fault_address, uint64_t intermediate_physical_address );
 extern uint64_t switch_to_partner( vm handler, uint64_t pc );
-extern uint64_t get_partner_reg( int code );
-extern void set_partner_reg( int code, uint64_t value );
+extern uint64_t get_partner_register( int code );
+extern void set_partner_register( int code, uint64_t value );
 
+typedef enum { CNTKCTL_EL1, CSSELR_EL1, MAIR_EL1, SCTLR_EL1, TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1, DACR32_EL2, CONTEXTIDR_EL1, ACTLR_EL1, AIDR_EL1, LAST_SYSTEM_REGISTER } vm_system_register;
+extern void set_vm_system_register( vm_system_register reg, uint32_t v );

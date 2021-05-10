@@ -161,6 +161,10 @@ show( elr_el1 );
 show( esr_el1 );
 show( spsr_el1 );
 show( sctlr_el1 );
+y += 2;
+show( ttbr0_el1 );
+show( ttbr1_el1 );
+y += 2;
 show( sp_el1 );
 show( vbar_el1 );
 y += 20;
@@ -221,12 +225,13 @@ show( scr_el3 );
     "\n  stp x2, x5, [x3], #16" \
     SAVE_SYSTEM_REGISTER_PAIR( hstr_el2, vmpidr_el2 ) \
     SAVE_SYSTEM_REGISTER_PAIR( vpidr_el2, vtcr_el2 ) \
+    SAVE_SYSTEM_REGISTER_PAIR( dacr32_el2, contextidr_el1 ) \
     : \
     : [vmmax] "i" (numberof( vm )) \
     , [vmsize] "i" (sizeof( vm[0] )) \
     );
 
-// Uses x3, x4, x5
+// Uses x3, x4, x5 // TODO use the offsets into the structure, and check they're name2 follows name1
 #define LOAD_SYSTEM_REGISTER_PAIR( name1, name2 ) \
     "\n  ldp x4, x5, [x3], #16" \
     "\n  msr "#name1 ", x4"  \
@@ -250,6 +255,7 @@ show( scr_el3 );
     LOAD_SYSTEM_REGISTER_PAIR( vttbr_el2, hcr_el2 ) \
     LOAD_SYSTEM_REGISTER_PAIR( hstr_el2, vmpidr_el2 ) \
     LOAD_SYSTEM_REGISTER_PAIR( vpidr_el2, vtcr_el2 ) \
+    LOAD_SYSTEM_REGISTER_PAIR( dacr32_el2, contextidr_el1 ) \
     : \
     : [vmmax] "i" (numberof( vm )) \
     , [vmsize] "i" (sizeof( vm[0] )) \
@@ -296,38 +302,8 @@ show( scr_el3 );
     "\n  eor x3, x3, #0x007 // FIQ. IRQ, NS" \
     "\n  eor x3, x3, #0x100 // HCE" \
     "\n  msr scr_el3, x3" \
-    "\n  tbnz x3, #0, switch_to_non_secure" \
+    "\n  tbz x3, #0, switch_to_secure" \
 \
-    "\n  stp x4, x5, [sp, #-16]! // Push x4 and x5 as well" \
-\
-    "\n  // Switch to secure mode, and partner thread" \
-    "\n  mov x0, x30" \
-    "\n  bl restore_secure_system_regs" \
-    "\n  mov x30, x0" \
-\
-    "\n  mrs x2, elr_el2" \
-    "\n  msr elr_el1, x2" \
-    "\n  mrs x3, spsr_el2" \
-    "\n  msr spsr_el1, x3" \
-    "\n  // Make a switch to partner call on secure EL1" \
-    "\n  mov x0, #0x56000000" \
-    "\n  movk x0, #"ENSTRING( ISAMBARD_SWITCH_TO_PARTNER ) \
-    "\n  msr esr_el1, x0" \
-\
-    "\n  mrs x0, vbar_el1" \
-    "\n  add x0, x0, #VBAR_EL23_LOWER_AARCH64_SYNC - VBAR_EL23" \
-    "\n  msr elr_el3, x0" \
-\
-    "\n  mov x0, #0x3c5" \
-    "\n  msr spsr_el3, x0" \
-    "\n  ldp x4, x5, [sp], #16 // Pop x4, x5" \
-\
-    "\n  ldp x2, x3, [sp, #16] // Pop x0-3 pushed before calling in_el3" \
-    "\n  ldp x0, x1, [sp], #32" \
-\
-    "\n  eret" \
-\
-    "\nswitch_to_non_secure:" \
     "\n  add sp, sp, #32 // stacked registers not needed" \
     "\n  mov x4, #1 // FIXME: only one VM supported, need to get required VMID to this code" \
     ); \
@@ -383,7 +359,36 @@ show( scr_el3 );
 
 #define AARCH64_VECTOR_TABLE_SPX_IRQ_CODE asm ( "bl bsod" );
 #define AARCH64_VECTOR_TABLE_SPX_FIQ_CODE asm ( "bl bsod" );
-#define AARCH64_VECTOR_TABLE_SPX_SERROR_CODE asm ( "bl bsod" );
+#define AARCH64_VECTOR_TABLE_SPX_SERROR_CODE asm ( "bl bsod" \
+    "\nswitch_to_secure:" \
+    "\n  stp x4, x5, [sp, #-16]! // Push x4 and x5 as well" \
+\
+    "\n  // Switch to secure mode, and partner thread" \
+    "\n  mov x0, x30" \
+    "\n  bl restore_secure_system_regs" \
+    "\n  mov x30, x0" \
+\
+    "\n  mrs x2, elr_el2" \
+    "\n  msr elr_el1, x2" \
+    "\n  mrs x3, spsr_el2" \
+    "\n  msr spsr_el1, x3" \
+    "\n  // Make a switch to partner call on secure EL1" \
+    "\n  mov x0, #0x56000000" \
+    "\n  movk x0, #"ENSTRING( ISAMBARD_SWITCH_TO_PARTNER ) \
+    "\n  msr esr_el1, x0" \
+\
+    "\n  mrs x0, vbar_el1" \
+    "\n  add x0, x0, #VBAR_EL23_LOWER_AARCH64_SYNC - VBAR_EL23" \
+    "\n  msr elr_el3, x0" \
+\
+    "\n  mov x0, #0x3c5" \
+    "\n  msr spsr_el3, x0" \
+    "\n  ldp x4, x5, [sp], #16 // Pop x4, x5" \
+\
+    "\n  ldp x2, x3, [sp, #16] // Pop x0-3 pushed before calling in_el3" \
+    "\n  ldp x0, x1, [sp], #32" \
+\
+    "\n  eret" );
 
 // Store a pair of registers, the low value should be even
 #define store_pair( thread, low, high ) "\n  stp x"#low", x"#high", ["#thread", #%[regs] + "#low" * 8]"
@@ -513,6 +518,8 @@ void roll_call( core_types *present, unsigned number )
 
   uint64_t hcr2 = 0b1000001110000000000000011111110110000111011;
   asm volatile ( "  msr HCR_EL2, %[bits]\n" : : [bits] "r" (hcr2) );
+
+  asm volatile ( "  msr VPIDR_EL2, %[bits]\n" : : [bits] "r" (0x410fb767) ); // ARM1176JZ-S
 
   led_init( 0x3f200000 );
 

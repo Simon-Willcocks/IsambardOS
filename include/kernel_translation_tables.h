@@ -7,12 +7,16 @@ void set_asid( Core *core, uint64_t asid );
 typedef struct {
   uint64_t cntkctl_el1;
   uint64_t csselr_el1;
+
   uint64_t mair_el1;
   uint64_t sctlr_el1;
+
   uint64_t tcr_el1;
   uint64_t ttbr0_el1; // Core-specific, in secure mode
+
   uint64_t ttbr1_el1;
   uint64_t vbar_el1;
+
   // uint64_t spsr_el1; Thread-specific
   // uint64_t elr_el1; Thread-specific
   // TPIDR_EL1
@@ -23,6 +27,8 @@ typedef struct {
   uint64_t vmpidr_el2;
   uint64_t vpidr_el2;
   uint64_t vtcr_el2;
+  uint64_t dacr32_el2;
+  uint64_t contextidr_el1;
 
   // contextidr_el2, CPTR_EL2, DACR32_EL2, HACR_EL2, RMR_EL2, RMR_EL2, TPIDR_EL2; No use for these registers
   // ESR_EL2, FAR_EL2, HPFAR_EL2, IFSR32_EL2; passed to partner thread to inform of exceptions
