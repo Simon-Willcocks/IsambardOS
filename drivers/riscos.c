@@ -2,6 +2,8 @@
 
 // Load RISCOS image from SD card, execute it in a Non-Secure environment.
 
+// #define QEMU test code fails, at the moment, better luck with RISC OS? Yes!
+
 #include "drivers.h"
 #include "aarch64_vmsa.h"
 
@@ -18,6 +20,7 @@ static const NUMBER riscos_ram_size = { .r = 64*1024*1024 };
 static const NUMBER disc_address = { .r = 0x363c0 }; // RISCOS.IMG block number
 static uint32_t const expected_crc = 0x0c84b58f;
 
+static uint64_t vm_memory_base = 0;
 
 ISAMBARD_INTERFACE( TRIVIAL_NUMERIC_DISPLAY )
 #include "interfaces/client/TRIVIAL_NUMERIC_DISPLAY.h"
@@ -124,7 +127,17 @@ static bool image_is_valid()
   arm_code[i++] = 0xe5912004; // ldr	r2, [r1, #4]
   arm_code[i++] = 0xe5812000; // str	r2, [r1]
 
+  // DACR
+  arm_code[i++] = 0xe3a07001; // mov	r7, #1
+  arm_code[i++] = 0xee037f10; // mcr	15, 0, r7, cr3, cr0, {0}
 
+  arm_code[0x2000] = 0x00008c02; // 	Map first megabyte to byte 0
+
+  arm_code[i++] = 0xe3a09902; // mov	r9, #32768	; 0x8000
+  arm_code[i++] = 0xe3899002; // orr	r9, r9, #2
+  arm_code[i++] = 0xee029f10; // mcr	15, 0, r9, cr2, cr0, {0}
+
+  {
   arm_code[i++] = 0xe3a0947f; // mov r9, #0x78000000
   arm_code[i++] = 0xe3a01000; // mov	r1, #0
   int loop = i;
@@ -133,13 +146,45 @@ static bool image_is_valid()
   arm_code[i++] = 0xe5819400; // str	r9, [r1, #1024]	; 0x400
   uint32_t branch = 0x5afffffe - (i - loop);
   arm_code[i++] = branch; // bpl loop
+  }
+
+  arm_code[i++] = 0xe3a0860e; // mov	r8, #14680064	; 0xe00000
+  arm_code[i++] = 0xe3888c3e; // orr	r8, r8, #15872	; 0x3e00
+  arm_code[i++] = 0xe388802f; // orr	r8, r8, #47	; 0x2f
+  arm_code[i++] = 0xee018f10; // mcr	15, 0, r8, cr1, cr0, {0}
+
+  {
+  arm_code[i++] = 0xe3a0947f; // mov r9, #0x78000000
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
+  int loop = i;
+                              // loop:
+  arm_code[i++] = 0xe2999001; // add r9, r9, #1
+  arm_code[i++] = 0xe5819400; // str	r9, [r1, #1024]	; 0x400
+  uint32_t branch = 0x5afffffe - (i - loop);
+  arm_code[i++] = branch; // bpl loop
+  }
+
+  arm_code[i++] = 0xee018f10; // mcr	15, 0, r8, cr1, cr0, {0}
+  arm_code[i++] = 0xee018f10; // mcr	15, 0, r8, cr1, cr0, {0}
+  arm_code[i++] = 0xee018f10; // mcr	15, 0, r8, cr1, cr0, {0}
+
+  {
+  arm_code[i++] = 0xe3a0947f; // mov r9, #0x78000000
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
+  int loop = i;
+                              // loop:
+  arm_code[i++] = 0xe2999001; // add r9, r9, #1
+  arm_code[i++] = 0xe5819400; // str	r9, [r1, #1024]	; 0x400
+  uint32_t branch = 0x5afffffe - (i - loop);
+  arm_code[i++] = branch; // bpl loop
+  }
 
   arm_code[i++] = 0xe3a0743f; // 	mov	r7, #1056964608	; 0x3f000000
   arm_code[i++] = 0xe3877602; // 	orr	r7, r7, #2097152	; 0x200000
   arm_code[i++] = 0xe587601c; // 	str	r6, [r7, #28]
   arm_code[i++] = 0xe587601c; // 	str	r6, [r7, #28]
 
-  branch = 0xeafffffe - i + 12;
+  uint32_t branch = 0xeafffffe - i + 12;
   arm_code[i++] = branch; // b 0x30
 
   for (int j = 0; j < i; j++) {
@@ -202,7 +247,7 @@ typedef union {
 
 #define READ_ONLY( n ) if (cp.is_read) set_partner_register( cp.Rt, n ); else asm ( "brk 1" );
 #define WRITE_ONLY if (cp.is_read) asm ( "brk 1" );
-#define READ_WRITE( n ) static uint64_t v = n; if (cp.is_read) set_partner_register( cp.Rt, v ); else v = get_partner_register( cp.Rt );
+#define READ_WRITE( n ) static uint64_t v = n; if (cp.is_read) set_partner_register( cp.Rt, v ); else v = get_partner_register( cp.Rt ); TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 900 ), N( y-10 ), N( v ), N( cp.is_read ? 0xffff00f0 : 0xff00ffff ) );
 
 static void cp15_access( uint32_t syndrome )
 {
@@ -221,6 +266,8 @@ if (y > 1000) {
   y = 50;
   x += 100;
 }
+asm ( "svc 0" );
+
   switch (syndrome & 0xffc1e) { // CRm, CRn, Opc1, Opc2
   case 0x00000: READ_ONLY( 0x410fb767 ); break; // midr ~ ARM1176 - does VPIDR_EL2 ever get used?
   case 0xa0000: READ_ONLY( 0x80000f00 ); break; // mpidr
@@ -232,16 +279,32 @@ if (y > 1000) {
   case 0x20000: { READ_ONLY( 0x1d152152 ); } break; // G7.2.34    CTR, Cache Type Register
   case 0x24000: WRITE_ONLY; break; // G7.2.26    CLIDR, Cache Level ID Register
   case 0x01c0e: WRITE_ONLY; asm ( "isb sy\ndsb sy" ); break; // ARM DDI 0360F Invalidate Both Caches. Also flushes the branch target cache
-  case 0x00400: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( SCTLR_EL1, v ); } } break; // SCTLR
+  case 0x00400: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( SCTLR_EL1, v ); } }; break; // SCTLR
   case 0xa1c14: WRITE_ONLY; asm ( "dmb sy" ); break; // G7.2.28         CP15DMB, Data Memory Barrier System instruction
   case 0x01c1c: WRITE_ONLY; asm ( "dmb sy" ); break; // Data Memory Barrier
   case 0x00c00: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( DACR32_EL2, v ); } } break; // G7.2.35 DACR, Domain Access Control Register
   case 0x40800: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( TCR_EL1, v ); } }; break; // Translation Table Base Control Register
-  case 0x20002: READ_ONLY( 1 ); break; // ID_PFR1
   case 0x00800: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( TTBR0_EL1, v ); } }; break; // Translation Table Base Register 0
+  //case 0x20400: { READ_WRITE( 7 ); if (!cp.is_read) { set_vm_system_register( ACTLR_EL1, v ); } }; break; // G7.2.1 ACTLR, Auxiliary Control Register  -- Fixing errata in Kernel/s/HAL:1031
+  case 0x20400: { READ_WRITE( 7 ); }; break; // G7.2.1 ACTLR, Auxiliary Control Register
 
+  case 0x00002: READ_ONLY( 0x00000111 ); break; // Read Proc Feature Register 0 (typo in ARM DDI 0360F)
+  case 0x20002: READ_ONLY( 0x00000001 ); break; // Read Proc Feature Register 1
+  case 0x40002: READ_ONLY( 0x00000002 ); break; // Read Debug Feature Register 0
+  case 0x80002: READ_ONLY( 0x01100103 ); break; // Read Memory Model Feature Register 0
+  case 0xa0002: READ_ONLY( 0x10020302 ); break; // Read Memory Model Feature Register 1
+  case 0xc0002: READ_ONLY( 0x01222000 ); break; // Read Memory Model Feature Register 2
+  case 0xe0002: READ_ONLY( 0x00000000 ); break; // Read Memory Model Feature Register 3
+
+  // The following values match the ARM11, but may not be supported by the 64-bit machine...
+  case 0x00004: READ_ONLY( 0x00100011 ); break; // ID_ISAR0, Instruction Set Attribute Register 0
+  case 0x20004: READ_ONLY( 0x12002111 ); break; // ID_ISAR1, Instruction Set Attribute Register 1
+  case 0x40004: READ_ONLY( 0x11221011 ); break; // ID_ISAR2, Instruction Set Attribute Register 2
+  case 0x60004: READ_ONLY( 0x01102131 ); break; // ID_ISAR3, Instruction Set Attribute Register 3
+  case 0x80004: READ_ONLY( 0x00000141 ); break; // ID_ISAR4, Instruction Set Attribute Register 4
   default: asm ( "brk 65" );
   }
+asm ( "svc 0" );
 }
 
 static void cp14_access( uint32_t syndrome )
@@ -297,7 +360,7 @@ static void respond_to_tag_request( uint32_t *request )
     p[2] = p[1] | (1<<31);
     switch (p[0]) {
     case 0x00010001: // Board model
-      p[3] = 0x2a2a2a2a; // Nobody cares, afaics!
+      p[3] = 0; // RISC OS locks up in HAL_Init if this is not zero!
       break;
     case 0x00010002: // Board revision
       p[3] = 13; // Model B+, 512MB https://elinux.org/RPi_HardwareHistory#Board_Revision_History NOT NewScheme!
@@ -450,6 +513,7 @@ uint64_t vm_handler( uint64_t pc, uint64_t syndrome, uint64_t fault_address, uin
   }
 
 asm ( "svc 0" );
+
   switch (syndrome >> 26) {
   case 0b000000: asm ( "brk 0b000000" ); break; // Never happens or is unimplemented
   case 0b000001: wait_until_woken(); break; // WFI or WFE
@@ -540,7 +604,7 @@ void entry()
     PHYSICAL_MEMORY_BLOCK el2_tt = SYSTEM__allocate_memory( system, tt_size );
     DRIVER_SYSTEM__map_at( driver_system(), el2_tt, el2_tt_address );
 
-    uint32_t base = PHYSICAL_MEMORY_BLOCK__physical_address( riscos_memory ).r;
+    vm_memory_base = PHYSICAL_MEMORY_BLOCK__physical_address( riscos_memory ).r;
 
     Aarch64_VMSA_entry *tt = (void*) el2_tt_address.r;
     for (int i = 0; i < 512; i++) {
@@ -548,7 +612,7 @@ void entry()
     }
 
     for (int i = 0; i < 32; i++) {
-      Aarch64_VMSA_entry entry = Aarch64_VMSA_block_at( base + (i << 21) );
+      Aarch64_VMSA_entry entry = Aarch64_VMSA_block_at( vm_memory_base + (i << 21) );
       entry = Aarch64_VMSA_write_back_memory( entry );
       entry.raw |= (1 <<10); // AF
       entry = Aarch64_VMSA_L2_rwx( entry );
@@ -562,8 +626,9 @@ void entry()
     uint64_t next_pc = 0;
 int events = 0;
     for (;;) {
+asm ( "svc 0" );
       next_pc = switch_to_partner( vm_handler, next_pc );
-if (++events > 0x48)
+if (++events > 0x90)
 sleep_ms( 5000 );
     }
   }

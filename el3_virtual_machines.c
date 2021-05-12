@@ -135,6 +135,35 @@ extern Aarch64_VMSA_entry kernel_tt_l2[16];
   invalidate_all_caches();
   show_thread( runnable->partner, 600, Yellow );
 
+  {
+  int y = 120;
+#define show( reg ) { show_qword( 1200, y, vm[1].reg, White ); y += 20; }
+  show( cntkctl_el1 );
+  show( csselr_el1 );
+
+  show( mair_el1 );
+  show( sctlr_el1 );
+
+  show( tcr_el1 );
+  show( ttbr0_el1 ); // Core-specific, in secure mode
+
+  show( ttbr1_el1 );
+  show( vbar_el1 );
+
+  show( actlr_el1 );
+  show( fpexc32_el2 ); // Placeholder
+
+  show( vttbr_el2 );
+  show( hcr_el2 );
+  show( hstr_el2 );
+  show( vmpidr_el2 );
+  show( vpidr_el2 );
+  show( vtcr_el2 );
+  show( dacr32_el2 );
+  show( contextidr_el1 );
+#undef show
+}
+  {
   int y = 120;
 #define show( reg ) { uint64_t r; asm ( "mrs %[r], "#reg : [r] "=r" (r) ); show_qword( 10, y, r, White ); y += 20; }
 //show( cntkctl_el1 );
@@ -190,20 +219,67 @@ show( vbar_el3 );
 y += 10;
 show( scr_el3 );
   }
+}
 
+  invalidate_all_caches();
 // contextidr_el2, CPTR_EL2, DACR32_EL2, HACR_EL2, RMR_EL2, RMR_EL2, TPIDR_EL2; No use for these registers
 // ESR_EL2, FAR_EL2, HPFAR_EL2, IFSR32_EL2; passed to partner thread to inform of exceptions
 // sctlr_el2, tcr_el2, mair_el2, vbar_el2; Relates to Isambard VM implementation, doesn't change
 
+  {
+    Aarch64_VMSA_entry entry = Aarch64_VMSA_block_at( 0x6000000 );
+    entry = Aarch64_VMSA_el0_rw_( entry );
+    entry.access_flag = 1; // Don't want to be notified when accessed
+    entry.shareability = 3; // Inner shareable
+    entry = Aarch64_VMSA_global( entry );
+    entry = Aarch64_VMSA_write_back_memory( entry );
+    kernel_tt_l2[6] = entry;
+  }
+for (;;) {}
+for (int i = 0; i < 4; i++)
+{
+  show_page( ((i+8) << 12) + (6 << 21) );
   invalidate_all_caches();
+  for (uint64_t t = 0; t < 10000000000ull; t++) { asm ( "" ); }
+}
+  for (uint64_t t = 0; t < 50000000000ull; t++) { asm ( "" ); }
+
+{
+  show_page( (0x22 << 12) + (6 << 21) );
+  invalidate_all_caches();
+  for (uint64_t t = 0; t < 100000000000ull; t++) { asm ( "" ); }
+}
+
+  for (int p = 0; p < 64; p++) {
+    show_page( (p << 12) + (6 << 21) );
+    invalidate_all_caches();
+    for (int t = 0; t < 1000000000; t++) { asm ( "" ); }
+  }
+
+  invalidate_all_caches();
+
   for (;;) { }
 }
 
+
+// NOTE!
+// In the following VBAR code, there is copious use of "i" inputs to the asm code, but NO "r" or "m" inputs.
+// The compiler MUST NOT be allowed to allocate registers itself.
+
+
 // Uses x3, x4, x5
 #define SAVE_SYSTEM_REGISTER_PAIR( name1, name2 ) \
+  asm ( \
     "\n  mrs x4, "#name1 \
     "\n  mrs x5, "#name2 \
-    "\n  stp x4, x5, [x3], #16"
+    "\n  stp x4, x5, [x3, #%[n1off]]" \
+    "\n.ifne %[n2off] - %[n1off] - 8" \
+    "\n  .error \"Trying to access pair of system variables that aren't consecutive: "#name1", "#name2"\"" \
+    "\n.endif" \
+    : \
+    : [n1off] "i" (&((vm_state *)0)->name1) \
+    , [n2off] "i" (&((vm_state *)0)->name2) \
+  );
 
 // Uses x2, x3, x4, x5
 #define SAVE_VM_SYSTEM_REGS \
@@ -216,26 +292,42 @@ show( scr_el3 );
     "\n  b.ge bsod" \
     "\n  mov x5, #%[vmsize]" \
     "\n  madd x3, x4, x5, x3" \
-    "\n" \
+    : \
+    : [vmmax] "i" (numberof( vm )) \
+    , [vmsize] "i" (sizeof( vm[0] )) \
+    ); \
     SAVE_SYSTEM_REGISTER_PAIR( cntkctl_el1, csselr_el1 ) \
     SAVE_SYSTEM_REGISTER_PAIR( mair_el1, sctlr_el1 ) \
     SAVE_SYSTEM_REGISTER_PAIR( tcr_el1, ttbr0_el1 ) \
     SAVE_SYSTEM_REGISTER_PAIR( ttbr1_el1, vbar_el1 ) \
-    "\n  mrs x5, hcr_el2" \
-    "\n  stp x2, x5, [x3], #16" \
+    SAVE_SYSTEM_REGISTER_PAIR( actlr_el1, fpexc32_el2 ) \
+    asm ( \
+      "\n  mrs x5, hcr_el2" \
+      "\n  stp x2, x5, [x3, #%[n1off]]" \
+      "\n.ifne %[n2off] - %[n1off] - 8" \
+      "\n  .error \"Trying to access pair of system variables that aren't consecutive: vttbr_el2, hcr_el2\"" \
+      "\n.endif" \
+      : \
+      : [n1off] "i" (&((vm_state *)0)->vttbr_el2) \
+      , [n2off] "i" (&((vm_state *)0)->hcr_el2) \
+    ); \
     SAVE_SYSTEM_REGISTER_PAIR( hstr_el2, vmpidr_el2 ) \
     SAVE_SYSTEM_REGISTER_PAIR( vpidr_el2, vtcr_el2 ) \
     SAVE_SYSTEM_REGISTER_PAIR( dacr32_el2, contextidr_el1 ) \
-    : \
-    : [vmmax] "i" (numberof( vm )) \
-    , [vmsize] "i" (sizeof( vm[0] )) \
-    );
 
-// Uses x3, x4, x5 // TODO use the offsets into the structure, and check they're name2 follows name1
+// Uses x3, x4, x5
 #define LOAD_SYSTEM_REGISTER_PAIR( name1, name2 ) \
-    "\n  ldp x4, x5, [x3], #16" \
+  asm ( \
+    "\n  ldp x4, x5, [x3, #%[n1off]]" \
     "\n  msr "#name1 ", x4"  \
-    "\n  msr "#name2 ", x5"
+    "\n  msr "#name2 ", x5" \
+    "\n.ifne %[n2off] - %[n1off] - 8" \
+    "\n  .error \"Trying to access pair of system variables that aren't consecutive: "#name1", "#name2"\"" \
+    "\n.endif" \
+    : \
+    : [n1off] "i" (&((vm_state *)0)->name1) \
+    , [n2off] "i" (&((vm_state *)0)->name2) \
+  );
 
 // Expects x4 to be number of vm (> 0, < numberof( vm ))
 // Uses x3, x4, x5
@@ -247,42 +339,55 @@ show( scr_el3 );
     "\n  b.ge bsod" \
     "\n  mov x5, #%[vmsize]" \
     "\n  madd x3, x4, x5, x3" \
-    "\n" \
+    : \
+    : [vmmax] "i" (numberof( vm )) \
+    , [vmsize] "i" (sizeof( vm[0] )) \
+    ); \
     LOAD_SYSTEM_REGISTER_PAIR( cntkctl_el1, csselr_el1 ) \
     LOAD_SYSTEM_REGISTER_PAIR( mair_el1, sctlr_el1 ) \
     LOAD_SYSTEM_REGISTER_PAIR( tcr_el1, ttbr0_el1 ) \
     LOAD_SYSTEM_REGISTER_PAIR( ttbr1_el1, vbar_el1 ) \
+    LOAD_SYSTEM_REGISTER_PAIR( actlr_el1, fpexc32_el2 ) \
     LOAD_SYSTEM_REGISTER_PAIR( vttbr_el2, hcr_el2 ) \
     LOAD_SYSTEM_REGISTER_PAIR( hstr_el2, vmpidr_el2 ) \
     LOAD_SYSTEM_REGISTER_PAIR( vpidr_el2, vtcr_el2 ) \
     LOAD_SYSTEM_REGISTER_PAIR( dacr32_el2, contextidr_el1 ) \
-    : \
-    : [vmmax] "i" (numberof( vm )) \
-    , [vmsize] "i" (sizeof( vm[0] )) \
-    );
 
 // Uses x2, x3, x4, x5
 // Expects x1 -> core->core
 #define LOAD_SECURE_EL1_REGS \
     asm ( \
-    "\n  adr x3, vm" \
+    "\n  adr x3, vm" ); \
     LOAD_SYSTEM_REGISTER_PAIR( cntkctl_el1, csselr_el1 ) \
     LOAD_SYSTEM_REGISTER_PAIR( mair_el1, sctlr_el1 ) \
+    asm ( \
+      "\n  mrs x5, hcr_el2" \
+      "\n  stp x2, x5, [x3, #%[n1off]]" \
+      : \
+      : [n1off] "i" (&((vm_state *)0)->vttbr_el2) \
+      , [n2off] "i" (&((vm_state *)0)->hcr_el2) \
+    ); \
+    asm ( \
     "\n  // LOAD_SYSTEM_REGISTER_PAIR( tcr_el1, ttbr0_el1 )" \
     "\n  // TODO: See if separating the following two lines from the msr and each other affects speed" \
     "\n  // Get the physical address of the current core structure, and add the offset to the TT" \
-    "\n  ldp x4, x5, [x3], #16" \
+    "\n  ldp x4, x5, [x3, #%[n1off]]" \
     "\n  add x2, x1, #16 - %[core_size] + %[pa_offset]" \
     "\n  ldr x5, [x2]" \
     "\n  add x5, x5, #%[tt_l1_offset]" \
     "\n  msr tcr_el1, x4" \
     "\n  msr ttbr0_el1, x5" \
-    LOAD_SYSTEM_REGISTER_PAIR( ttbr1_el1, vbar_el1 ) \
+    "\n.ifne %[n2off] - %[n1off] - 8" \
+    "\n  .error \"Trying to access pair of system variables that aren't consecutive: vttbr_el2, hcr_el2\"" \
+    "\n.endif" \
     : \
     : [core_size] "i" (sizeof( Core )) \
     , [pa_offset] "i" (&((Core *)0)->physical_address) \
     , [tt_l1_offset] "i" (&((Core *)0)->core_tt_l1) \
-    );
+    , [n1off] "i" (&((vm_state *)0)->tcr_el1) \
+    , [n2off] "i" (&((vm_state *)0)->ttbr0_el1) \
+    ); \
+    LOAD_SYSTEM_REGISTER_PAIR( ttbr1_el1, vbar_el1 )
 
 // We can safely use the section of the table that has to do with same-level exceptions using SP0,
 // since we never use those modes.
@@ -482,8 +587,38 @@ show( scr_el3 );
 
 #include "aarch64_vector_table.h"
 
+vm_state default_vm_state;
+
+static void initialise_default_vm()
+{
+  asm ( "mrs %[r], cntkctl_el1" : [r] "=r" (default_vm_state.cntkctl_el1) );
+  asm ( "mrs %[r], csselr_el1" : [r] "=r" (default_vm_state.csselr_el1) );
+
+  asm ( "mrs %[r], mair_el1" : [r] "=r" (default_vm_state.mair_el1) );
+  asm ( "mrs %[r], sctlr_el1" : [r] "=r" (default_vm_state.sctlr_el1) );
+
+  asm ( "mrs %[r], tcr_el1" : [r] "=r" (default_vm_state.tcr_el1) );
+  asm ( "mrs %[r], ttbr0_el1" : [r] "=r" (default_vm_state.ttbr0_el1) ); // Core-specific, in secure mode
+
+  asm ( "mrs %[r], ttbr1_el1" : [r] "=r" (default_vm_state.ttbr1_el1) );
+  asm ( "mrs %[r], vbar_el1" : [r] "=r" (default_vm_state.vbar_el1) );
+
+  asm ( "mrs %[r], actlr_el1" : [r] "=r" (default_vm_state.actlr_el1) );
+  asm ( "mrs %[r], fpexc32_el2" : [r] "=r" (default_vm_state.fpexc32_el2) ); // Placeholder
+
+  default_vm_state.vttbr_el2 = 0;
+  asm ( "mrs %[r], hcr_el2" : [r] "=r" (default_vm_state.hcr_el2) );
+  asm ( "mrs %[r], hstr_el2" : [r] "=r" (default_vm_state.hstr_el2) );
+  asm ( "mrs %[r], vmpidr_el2" : [r] "=r" (default_vm_state.vmpidr_el2) );
+  asm ( "mrs %[r], vpidr_el2" : [r] "=r" (default_vm_state.vpidr_el2) );
+  asm ( "mrs %[r], vtcr_el2" : [r] "=r" (default_vm_state.vtcr_el2) );
+  asm ( "mrs %[r], dacr32_el2" : [r] "=r" (default_vm_state.dacr32_el2) );
+  asm ( "mrs %[r], contextidr_el1" : [r] "=r" (default_vm_state.contextidr_el1) );
+}
+
 void __attribute__(( noreturn )) el3_with_mmu( EL_PARAMETERS )
 {
+  initialise_default_vm();
   el3_prepare_el2_for_entry( core );
   el3_run_at_secure_el1( EL_ARGUMENTS, isambard_secure_el1 );
 }

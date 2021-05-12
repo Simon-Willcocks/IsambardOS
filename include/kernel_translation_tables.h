@@ -17,16 +17,22 @@ typedef struct {
   uint64_t ttbr1_el1;
   uint64_t vbar_el1;
 
+  uint64_t actlr_el1;
+  uint64_t fpexc32_el2; // Placeholder
+
   // uint64_t spsr_el1; Thread-specific
   // uint64_t elr_el1; Thread-specific
   // TPIDR_EL1
 
   uint64_t vttbr_el2;
   uint64_t hcr_el2;
+
   uint64_t hstr_el2;
   uint64_t vmpidr_el2;
+
   uint64_t vpidr_el2;
   uint64_t vtcr_el2;
+
   uint64_t dacr32_el2;
   uint64_t contextidr_el1;
 

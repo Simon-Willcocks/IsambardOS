@@ -33,15 +33,6 @@ vm_state __attribute__(( aligned( 16 ) )) vm[2] = {
       .ttbr1_el1 = 0,     // Set in switch_to_running_in_high_memory
       // .ttbr0_el1 = 0, core-specific
       .vbar_el1 = (uint64_t) VBAR_SEL1
-    },
-    {
-      .vttbr_el2 = 0,
-      .hcr_el2 = 0x00000003ull, // 32-bit EL0&1, VM, no nesting
-      .hstr_el2 = 0xffff,       // Hypervisor System Trap Register
-      .vmpidr_el2 = 0xc0000000, // Virtualization Multiprocessor ID Register
-      .vpidr_el2 = 0x410fc075,  // Pi2, according to qemu
-      .sctlr_el1 = 0xd50070,    //  ditto, except clearing SP alignment check bit
-      .vtcr_el2 = 0x800080f22   // t0sz = 34 (1GB), SL0 = 0, IRGN0, ORGN0 = 0, TG0 = 0 (4k), PS = 0 (4GB), VS=1 (16-bit)
     } };
 
 extern void _start(); // For the PC-relative address of the start of the code
@@ -1086,7 +1077,16 @@ static thread_switch system_driver_request( Core *core, thread_context *thread )
     {
       if (vm[1].vttbr_el2 != 0) BSOD( __COUNTER__ ); // Only one VM atm
       if (thread->regs[2] != 4096) BSOD( __COUNTER__ ); // Only one VM atm
+
+vm[1].hcr_el2 = 0x00000003ull; // 32-bit EL0&1, VM, no nesting
+vm[1].hstr_el2 = 0xffff;       // Hypervisor System Trap Register
+vm[1].vmpidr_el2 = 0xc0000000; // Virtualization Multiprocessor ID Register
+vm[1].vpidr_el2 = 0x410fc075;  // Pi2, according to qemu
+vm[1].sctlr_el1 = 0xd50070;    //  ditto, except clearing SP alignment check bit
+vm[1].vtcr_el2 = 0x800080f22;  // t0sz = 34 (1GB); SL0 = 0, IRGN0, ORGN0 = 0, TG0 = 0 (4k), PS = 0 (4GB), VS=1 (16-bit)
+
       vm[1].vttbr_el2 = (1ull << 48) | thread->regs[1];
+
       thread_context *partner = allocate_heap( sizeof( thread_context ) );
       thread->partner = partner;
       initialise_new_thread( thread->partner );

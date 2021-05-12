@@ -637,12 +637,13 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
       if (thread->current_map != partner->current_map) BSOD( __COUNTER__ );
 
       unsigned int register_index = thread->regs[0];
-      if (register_index >= 9) BSOD( __COUNTER__ ); // Register code, takes care of _svc registers, etc.
+      if (register_index >= 18) BSOD( __COUNTER__ ); // Register code, takes care of _svc registers, etc.
 
-      uint32_t *sysregs = (void*) &vm[1]; // FIXME more than one vm!
+      uint64_t *sysregs = (void*) &vm[1]; // FIXME more than one vm!
 
-      sysregs[register_index] = thread->regs[1];
       asm ( "dc civac, %[r]" : : [r] "r" (&sysregs[register_index]) );
+      sysregs[register_index] = thread->regs[1];
+      asm ( "dsb sy\ndc cvac, %[r]" : : [r] "r" (&sysregs[register_index]) );
     }
     return result;
   case ISAMBARD_SYSTEM_REQUEST:

@@ -19,7 +19,7 @@
 #define ISAMBARD_GET_PARTNER_REG 0xf00d
 #define ISAMBARD_SET_PARTNER_REG 0xf00e
 // FIXME: Should be done through a system driver interface, maybe the above 2, as well
-#define ISAMBARD_SET_VM_SYSTEM_REGISTER 0xf10e
+#define ISAMBARD_SET_VM_SYSTEM_REGISTER 0xf00f
 
 // Only usable by system driver:
-#define ISAMBARD_SYSTEM_REQUEST 0xf00f
+#define ISAMBARD_SYSTEM_REQUEST 0xf010
