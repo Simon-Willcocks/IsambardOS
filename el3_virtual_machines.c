@@ -651,9 +651,6 @@ void roll_call( core_types *present, unsigned number )
   asm volatile ( "  msr VBAR_EL3, %[table]\n" : : [table] "r" (VBAR_EL23) );
   asm volatile ( "  msr VBAR_EL2, %[table]\n" : : [table] "r" (VBAR_EL23) );
 
-  uint64_t hcr2 = 0b1000001110000000000000011111110110000111011;
-  asm volatile ( "  msr HCR_EL2, %[bits]\n" : : [bits] "r" (hcr2) );
-
   asm volatile ( "  msr VPIDR_EL2, %[bits]\n" : : [bits] "r" (0x410fb767) ); // ARM1176JZ-S
 
   led_init( 0x3f200000 );

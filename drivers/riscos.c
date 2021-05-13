@@ -247,13 +247,13 @@ typedef union {
 
 #define READ_ONLY( n ) if (cp.is_read) set_partner_register( cp.Rt, n ); else asm ( "brk 1" );
 #define WRITE_ONLY if (cp.is_read) asm ( "brk 1" );
-#define READ_WRITE( n ) static uint64_t v = n; if (cp.is_read) set_partner_register( cp.Rt, v ); else v = get_partner_register( cp.Rt ); TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 900 ), N( y-10 ), N( v ), N( cp.is_read ? 0xffff00f0 : 0xff00ffff ) );
+#define READ_WRITE( n ) static uint64_t v = n; if (cp.is_read) set_partner_register( cp.Rt, v ); else v = get_partner_register( cp.Rt );
 
 static void cp15_access( uint32_t syndrome )
 {
   copro_syndrome cp = { .raw = syndrome };
 static int y = 50;
-static int x = 1000;
+static int x = 100;
 
 TRIVIAL_NUMERIC_DISPLAY__show_4bits( tnd, N( x ), N( y ), N( cp.Opc1 ), N( 0xff0ff0f0 ) );
 TRIVIAL_NUMERIC_DISPLAY__show_4bits( tnd, N( x+10 ), N( y ), N( cp.CRn ), N( 0xff0ff0f0 ) );
@@ -271,22 +271,24 @@ asm ( "svc 0" );
   switch (syndrome & 0xffc1e) { // CRm, CRn, Opc1, Opc2
   case 0x00000: READ_ONLY( 0x410fb767 ); break; // midr ~ ARM1176 - does VPIDR_EL2 ever get used?
   case 0xa0000: READ_ONLY( 0x80000f00 ); break; // mpidr
-  case 0x01c0a: WRITE_ONLY; break; // G7.2.76    ICIALLU, Instruction Cache Invalidate All to PoU
-  case 0x0200e: WRITE_ONLY; break; // G7.2.130   TLBIALL, TLB Invalidate All
-  case 0xc1c0a: WRITE_ONLY; break; // G7.2.21    BPIALL, Branch Predictor Invalidate All
-  case 0x81c14: WRITE_ONLY; asm ( "dsb sy" ); break; // G7.2.29    CP15DSB, Data Synchronization Barrier System instruction
-  case 0x81c0a: WRITE_ONLY; asm ( "isb sy" ); break; // G7.2.30    CP15ISB, Instruction Synchronization Barrier System instruction
   case 0x20000: { READ_ONLY( 0x1d152152 ); } break; // G7.2.34    CTR, Cache Type Register
-  case 0x24000: WRITE_ONLY; break; // G7.2.26    CLIDR, Cache Level ID Register
-  case 0x01c0e: WRITE_ONLY; asm ( "isb sy\ndsb sy" ); break; // ARM DDI 0360F Invalidate Both Caches. Also flushes the branch target cache
   case 0x00400: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( SCTLR_EL1, v ); } }; break; // SCTLR
-  case 0xa1c14: WRITE_ONLY; asm ( "dmb sy" ); break; // G7.2.28         CP15DMB, Data Memory Barrier System instruction
-  case 0x01c1c: WRITE_ONLY; asm ( "dmb sy" ); break; // Data Memory Barrier
   case 0x00c00: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( DACR32_EL2, v ); } } break; // G7.2.35 DACR, Domain Access Control Register
   case 0x40800: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( TCR_EL1, v ); } }; break; // Translation Table Base Control Register
   case 0x00800: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( TTBR0_EL1, v ); } }; break; // Translation Table Base Register 0
   //case 0x20400: { READ_WRITE( 7 ); if (!cp.is_read) { set_vm_system_register( ACTLR_EL1, v ); } }; break; // G7.2.1 ACTLR, Auxiliary Control Register  -- Fixing errata in Kernel/s/HAL:1031
   case 0x20400: { READ_WRITE( 7 ); }; break; // G7.2.1 ACTLR, Auxiliary Control Register
+
+  // Question: why are these being trapped, I thought that was optional...?
+  case 0x01c0a: WRITE_ONLY; break; // G7.2.76    ICIALLU, Instruction Cache Invalidate All to PoU
+  case 0x0200e: WRITE_ONLY; break; // G7.2.130   TLBIALL, TLB Invalidate All
+  case 0xc1c0a: WRITE_ONLY; break; // G7.2.21    BPIALL, Branch Predictor Invalidate All
+  case 0x81c14: WRITE_ONLY; asm ( "dsb sy" ); break; // G7.2.29    CP15DSB, Data Synchronization Barrier System instruction
+  case 0x81c0a: WRITE_ONLY; asm ( "isb sy" ); break; // G7.2.30    CP15ISB, Instruction Synchronization Barrier System instruction
+  case 0x24000: WRITE_ONLY; break; // G7.2.26    CLIDR, Cache Level ID Register
+  case 0x01c0e: WRITE_ONLY; asm ( "isb sy\ndsb sy" ); break; // ARM DDI 0360F Invalidate Both Caches. Also flushes the branch target cache
+  case 0xa1c14: WRITE_ONLY; asm ( "dmb sy" ); break; // G7.2.28         CP15DMB, Data Memory Barrier System instruction
+  case 0x01c1c: WRITE_ONLY; asm ( "dmb sy" ); break; // Data Memory Barrier
 
   case 0x00002: READ_ONLY( 0x00000111 ); break; // Read Proc Feature Register 0 (typo in ARM DDI 0360F)
   case 0x20002: READ_ONLY( 0x00000001 ); break; // Read Proc Feature Register 1
@@ -302,6 +304,7 @@ asm ( "svc 0" );
   case 0x40004: READ_ONLY( 0x11221011 ); break; // ID_ISAR2, Instruction Set Attribute Register 2
   case 0x60004: READ_ONLY( 0x01102131 ); break; // ID_ISAR3, Instruction Set Attribute Register 3
   case 0x80004: READ_ONLY( 0x00000141 ); break; // ID_ISAR4, Instruction Set Attribute Register 4
+  case 0xa0004: READ_ONLY( 0x00000000 ); break; // ID_ISAR5, Instruction Set Attribute Register 5 - not in ARM11? - not in ARM11?
   default: asm ( "brk 65" );
   }
 asm ( "svc 0" );
@@ -348,6 +351,9 @@ static void respond_to_tag_request( uint32_t *request )
 {
   uint32_t *p = request;
 
+  // Undocumented interface, afaics
+  uint32_t *virtual_GPIO_buffer = 0;
+
   // Always assumes correct use
   p[1] = 0x80000000;
   p+=2;
@@ -363,7 +369,7 @@ static void respond_to_tag_request( uint32_t *request )
       p[3] = 0; // RISC OS locks up in HAL_Init if this is not zero!
       break;
     case 0x00010002: // Board revision
-      p[3] = 13; // Model B+, 512MB https://elinux.org/RPi_HardwareHistory#Board_Revision_History NOT NewScheme!
+      p[3] = 13; // Model B, 512MB https://elinux.org/RPi_HardwareHistory#Board_Revision_History NOT NewScheme!
       break;
     case 0x00010003: // MAC address
       p[2] = 6 | (1<<31);
@@ -392,8 +398,8 @@ static void respond_to_tag_request( uint32_t *request )
       case 1: p[4] = 250000; break; // EMMC
       case 4: p[4] = 250000000; break; // CORE
       default:
-        TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 40 ), N( p[0] ), N( 0xff0ff0f0 ) );
-        TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 50 ), N( p[3] ), N( 0xff0ff0f0 ) );
+        TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 440 ), N( p[0] ), N( 0xff0ff0f0 ) );
+        TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 450 ), N( p[3] ), N( 0xff0ff0f0 ) );
         asm ( "brk 1" );
       }
       break;
@@ -401,17 +407,142 @@ static void respond_to_tag_request( uint32_t *request )
       switch (p[3]) {
       case 2: break; // UART
       default:
-        TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 40 ), N( p[0] ), N( 0xff0ff0f0 ) );
-        TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 50 ), N( p[3] ), N( 0xff0ff0f0 ) );
+        TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 440 ), N( p[0] ), N( 0xff0ff0f0 ) );
+        TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 450 ), N( p[3] ), N( 0xff0ff0f0 ) );
         asm ( "brk 1" );
       }
       break;
+
+    case 0x00048020: // ARM2VC_Tag_SetVirtGPIOBuf I don't know what this is for!
+      virtual_GPIO_buffer = p[3];
+      // RISC OS: ; On success, firmware should overwrite the address with zero
+      p[3] = 0;
+      break;
+
+    // Frame buffer
+
     default: // Unknown
-      TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 40 ), N( p[0] ), N( 0xfffff0f0 ) );
+      TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 440 ), N( p[0] ), N( 0xffff0000 ) );
       asm ( "brk 1" );
       break;
     }
     p += 3 + p[1]/4;
+  }
+}
+
+static void bcm_2835_system_timer_access( bool is_write, int register_index, uint64_t offset )
+{
+  // FIXME! First access at 0fc009674
+}
+
+static void bsc_access( unsigned device, bool is_write, int register_index, uint64_t offset )
+{
+  static struct {
+    uint32_t Control;
+    uint32_t Status;
+    uint32_t Data_Length;
+    uint32_t Slave_Address;
+    uint32_t Data_FIFO;
+    uint32_t Clock_Divider;
+    uint32_t Data_Delay;
+    uint32_t Clock_Stretch_Timeout;
+  } BSC[3];
+
+// FIXME Pretend to be something on the other end of the bus (or allow access to the real hardware)
+unsigned y = 800;
+if (is_write) {
+TRIVIAL_NUMERIC_DISPLAY__show_8bits( tnd, N( 1160 ), N( y ), N( offset ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1200 ), N( y ), N( get_partner_register( register_index ) ), N( 0xff00ff00 ) );
+}
+else {
+TRIVIAL_NUMERIC_DISPLAY__show_8bits( tnd, N( 1160 ), N( y ), N( offset ), N( 0xff00ffff ) );
+}
+y += 10;
+
+  if (device >= 3) asm ( "brk 1" );
+
+  switch (offset) {
+  case 0x00: // Control
+    {
+      if (is_write) {
+        BSC[device].Control = get_partner_register( register_index );
+      }
+      else {
+        set_partner_register( register_index, BSC[device].Control );
+      }
+    }
+    break;
+  case 0x04: // Status
+    {
+      if (is_write) {
+        BSC[device].Status = get_partner_register( register_index );
+      }
+      else {
+        set_partner_register( register_index, BSC[device].Status );
+      }
+    }
+    break;
+  case 0x08: // Data_Length
+    {
+      if (is_write) {
+        BSC[device].Data_Length = get_partner_register( register_index );
+      }
+      else {
+        set_partner_register( register_index, BSC[device].Data_Length );
+      }
+    }
+    break;
+  case 0x0c: // Slave_Address
+    {
+      if (is_write) {
+        BSC[device].Slave_Address = get_partner_register( register_index );
+      }
+      else {
+        set_partner_register( register_index, BSC[device].Slave_Address );
+      }
+    }
+    break;
+  case 0x10: // Data_FIFO
+    {
+      if (is_write) {
+        BSC[device].Data_FIFO = get_partner_register( register_index );
+      }
+      else {
+        set_partner_register( register_index, BSC[device].Data_FIFO );
+      }
+    }
+    break;
+  case 0x14: // Clock_Divider
+    {
+      if (is_write) {
+        BSC[device].Clock_Divider = get_partner_register( register_index );
+      }
+      else {
+        set_partner_register( register_index, BSC[device].Clock_Divider );
+      }
+    }
+    break;
+  case 0x18: // Data_Delay
+    {
+      if (is_write) {
+        BSC[device].Data_Delay = get_partner_register( register_index );
+      }
+      else {
+        set_partner_register( register_index, BSC[device].Data_Delay );
+      }
+    }
+    break;
+  case 0x1c: // Clock_Stretch_Timeout
+    {
+      if (is_write) {
+        BSC[device].Clock_Stretch_Timeout = get_partner_register( register_index );
+      }
+      else {
+        set_partner_register( register_index, BSC[device].Clock_Stretch_Timeout );
+      }
+    }
+    break;
+  default: asm ( "brk 1" );
   }
 }
 
@@ -442,12 +573,17 @@ static void stage2_data_abort( uint64_t syndrome, uint64_t fault_address, uint64
   static uint32_t mailbox_request = 0xffffffff;
 #define BASE 0x20000000
 //#define BASE 0x3f000000
+#define PAGE( low ) BASE | low ... BASE | low | 0xfff
 
-  switch (fault_address) {
+  uint64_t physical_fault_address = (intermediate_physical_address << 8) | (fault_address & 0xfff);
+
+TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1500 ), N( 380 ), NUMBER__from_integer_register( physical_fault_address ), N( 0xffff0000 ) );
+
+  switch (physical_fault_address) {
   case BASE | 0x100020: // Power management, reset status
     {
       if (!s.WnR) {
-        set_partner_register( s.SRT, 1 << 12 ); // Had power on reset
+        set_partner_register( s.SRT, 1 << 12 ); // Report power on reset
       }
       else { asm ( "brk 1" ); }
       break;
@@ -472,13 +608,13 @@ static void stage2_data_abort( uint64_t syndrome, uint64_t fault_address, uint64
     {
       mailbox_request = get_partner_register( s.SRT );
 
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1200 ), N( 400 ), NUMBER__from_integer_register( mailbox_request ), N( 0xff00ffff ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1200 ), N( 410 ), NUMBER__from_integer_register( s.SRT ), N( 0xff00ffff ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 400 ), NUMBER__from_integer_register( mailbox_request ), N( 0xffff0000 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 410 ), NUMBER__from_integer_register( s.SRT ), N( 0xffff0000 ) );
 
       if (s.WnR) {
         mailbox_request = get_partner_register( s.SRT );
 
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 800 ), N( 420 ), NUMBER__from_integer_register( mailbox_request ), N( 0xff00ffff ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 420 ), NUMBER__from_integer_register( mailbox_request ), N( 0xffff0000 ) );
 asm ( "svc 0" );
 
         if ((mailbox_request & 0xf) == 8) {
@@ -490,8 +626,28 @@ asm ( "svc 0" );
         }
         else { asm ( "brk 1" ); }
       }
+      else { asm ( "brk 1" ); }
       break;
     }
+
+  //case BASE | 0x200000 ... BASE | 0x20fff: // GPIO
+  case BASE | 0x200000: // GPIO
+    {
+    }
+    break;
+
+  case PAGE( 0x205000 ): // BSC0 control
+    bsc_access( 0, s.WnR, s.SRT, physical_fault_address & 0xfff ); break;
+
+  case PAGE( 0x804000 ): // BSC1 control
+    bsc_access( 1, s.WnR, s.SRT, physical_fault_address & 0xfff ); break;
+
+  case PAGE( 0x805000 ): // BSC2 control
+    bsc_access( 2, s.WnR, s.SRT, physical_fault_address & 0xfff ); break;
+
+  case PAGE( 0x003000 ):
+    bcm_2835_system_timer_access( s.WnR, s.SRT, physical_fault_address & 0xfff ); break;
+
   default:
     asm ( "brk 1" );
   }
@@ -623,12 +779,16 @@ void entry()
     }
     DRIVER_SYSTEM__make_partner_thread( driver_system(), PHYSICAL_MEMORY_BLOCK__duplicate_to_pass_to( driver_system().r, el2_tt ) );
 
+    uint64_t hcr2 = 0b1000001110000000000000011111110110000111011;
+
+    set_vm_system_register( HCR_EL2, hcr2 );
+
     uint64_t next_pc = 0;
 int events = 0;
     for (;;) {
 asm ( "svc 0" );
       next_pc = switch_to_partner( vm_handler, next_pc );
-if (++events > 0x90)
+if (++events > 0x400)
 sleep_ms( 5000 );
     }
   }
