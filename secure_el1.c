@@ -625,7 +625,7 @@ static bool find_and_map_memory( Core *core, thread_context *thread, uint64_t fa
     asm ( "smc 3" );
     asm ( "mov %0, %0\nwfi" : : "r" (fa) );
     // Throw unnamed exception FIXME
-    // i.e. set spsr V flag, and resume?
+    // i.e. set spsr V flag, and resume? No! Not entered by programmer action!
   }
   else {
     Interface *memory_provider = interface_from_index( vmb->memory_block );
@@ -1154,14 +1154,27 @@ thread_switch __attribute__(( noinline )) SEL1_SPX_IRQ_CODE( void *opaque, threa
   return result;
 }
 
-static bool address_is_user_writable( uint64_t address )
+static bool find_and_map_memory( Core *core, thread_context *thread, uint64_t fa );
+
+static bool address_is_user_writable( Core *core, thread_context *thread, uint64_t address )
 {
   uint64_t pa;
   asm volatile ( "\tAT S1E0W, %[va]"
                "\n\tmrs %[pa], PAR_EL1"
                  : [pa] "=r" (pa)
                  : [va] "r" (address) );
-  return (0 == (pa & 1));
+  if (0 == (pa & 1)) return true;
+
+  if (find_and_map_memory( core, thread, address )) {
+    asm volatile ( "  dsb sy"
+                 "\n  AT S1E0W, %[va]"
+                 "\n  mrs %[pa], PAR_EL1"
+                   : [pa] "=r" (pa)
+                   : [va] "r" (address) );
+    return (0 == (pa & 1));
+  }
+
+  return false;
 }
 
 static bool is_real_thread( uint32_t code )
