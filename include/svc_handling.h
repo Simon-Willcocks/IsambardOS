@@ -230,8 +230,13 @@ static inline thread_switch handle_svc_wait_for_lock( Core *core, thread_context
 
   uint64_t x17 = thread->regs[17];
   uint64_t x18 = thread->regs[18];
-  if (address_is_user_writable( x17 )
-   && thread_from_code( x18 ) == thread) {
+  if (!address_is_user_writable( core, thread, x17 )) {
+    BSOD( __COUNTER__ ); // Lock address not user writable (releasing)
+  }
+  else if (thread_from_code( x18 ) != thread) {
+    BSOD( __COUNTER__ ); // thread code invalid (releasing).
+  }
+  else {
     // FIXME: This is only safe with single core (IRQs disabled, so nothing can write to the lock)
     // FIXME: This is only safe while maps are not shared across cores
     // FIXME: This is only safe while the lock address is not shared across maps
@@ -331,9 +336,6 @@ static inline thread_switch handle_svc_wait_for_lock( Core *core, thread_context
     } while (write_failed);
     dsb();
   }
-  else {
-    BSOD( __COUNTER__ ); // Not writable, or thread code invalid, blocking
-  }
 
   return result;
 }
@@ -344,9 +346,13 @@ static inline thread_switch handle_svc_release_lock( Core *core, thread_context 
 
   uint64_t x17 = thread->regs[17];
   uint64_t x18 = thread->regs[18];
-  if (address_is_user_writable( x17 )
-   && thread_from_code( x18 ) == thread) {
-
+  if (!address_is_user_writable( core, thread, x17 )) {
+    BSOD( __COUNTER__ ); // Lock address not user writable (releasing)
+  }
+  else if (thread_from_code( x18 ) != thread) {
+    BSOD( __COUNTER__ ); // thread code invalid (releasing).
+  }
+  else {
     // FIXME: This is only safe with single core (IRQs disabled, so nothing can write to the lock)
     // FIXME: This is only safe while maps are not shared across cores
     // FIXME: This is only safe while the lock address is not shared across maps
@@ -393,9 +399,6 @@ static inline thread_switch handle_svc_release_lock( Core *core, thread_context 
     dsb();
     // TODO release kernel lock
   }
-  else {
-    BSOD( __COUNTER__ ); // Not writable, or thread code invalid, releasing.
-  }
 
   return result;
 }
@@ -410,22 +413,37 @@ static inline thread_switch handle_svc( Core *core, thread_context *thread, int 
   case 0:
     invalidate_all_caches();
     return result;
-  case 1:
-  case 2:
-  case 3:
-  case 4:
-  case 5:
-  case 6:
   case 7:
+{ // FIXME FIXME FIXME Remove: testing only! Only works with one VM. Massive security hole!
+    thread_context *t = thread;
+    while (t->next != thread && t->partner == 0) {
+      t = t->next;
+    }
+    if ((t->spsr & 0x10) == 0) t = t->partner;
+    if (t != 0) {
+      thread->regs[0] = t->regs[thread->regs[0]];
+    }
+}
+    return result;
   case 8:
+{ // FIXME FIXME FIXME Remove: testing only! Only works with one VM. Massive security hole!
+    thread_context *t = thread;
+    while (t->next != thread && t->partner == 0) {
+      t = t->next;
+    }
+    if ((t->spsr & 0x10) == 0) t = t->partner;
+  vm[1].hcr_el2 |= (1 << 7);
+}
+    return result;
   case 9:
-  case 10:
-  case 11:
-  case 12:
-  case 13:
-  case 14:
-  case 15:
-    //led_blink( number & 15 );
+{ // FIXME FIXME FIXME Remove: testing only! Only works with one VM. Massive security hole!
+    thread_context *t = thread;
+    while (t->next != thread && t->partner == 0) {
+      t = t->next;
+    }
+    if ((t->spsr & 0x10) == 0) t = t->partner;
+  vm[1].hcr_el2 &= ~(1 << 7);
+}
     return result;
   case ISAMBARD_GATE: // gate (wait_until_woken or wake_thread)
     return handle_svc_gate( core, thread );

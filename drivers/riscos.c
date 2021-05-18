@@ -6,6 +6,7 @@
 
 #include "drivers.h"
 #include "aarch64_vmsa.h"
+#include "exclusive.h"
 
 ISAMBARD_INTERFACE( BLOCK_DEVICE )
 #include "interfaces/client/BLOCK_DEVICE.h"
@@ -78,16 +79,22 @@ static uint32_t __attribute__(( target("+crc") )) hardware_crc32( uint8_t *p, ui
 }
 
 #ifdef QEMU
-static void timer_thread()
+static void qemu_timer_thread()
 {
   uint32_t *arm_code = (void *) ro_address.r;
   uint32_t count = 0;
   for (;;) {
-    // Insufficient asm volatile ( "dc civac, %[va]" : : [va] "r" (&arm_code[0x100]) );
-    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 1000 ), NUMBER__from_integer_register( arm_code[0x100] ), N( 0xffff0000 | (count & 15) * 0x1020 ) );
-    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 1010 ), NUMBER__from_integer_register( count++ ), N( 0xffffffff ) );
-    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 1020 ), NUMBER__from_integer_register( this_thread ), N( 0xffffffff ) );
+    uint32_t colour = 0xff00ff00;
+    if (++count == 100) {
+    count = 0;
+    for (int i = 0; i < 35; i++) {
+      uint64_t n = 0x44444444;
+      asm ( "mov x0, %[n]\nsvc 7\nmov %[r], x0" : [r] "=&r" (n) : [n] "r" (i) : "x0" );
+      TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 600 + 10*i ), NUMBER__from_integer_register( n ), N( colour ) );
+    }
     asm ( "svc 0" );
+    }
+
     sleep_ms( 25 );
   }
 }
@@ -193,7 +200,7 @@ static bool image_is_valid()
   arm_code[0x100] = 0x11223344;
 
   static uint64_t __attribute__(( aligned( 16 ) )) stack[32];
-  create_thread( timer_thread, stack + 32 );
+  create_thread( qemu_timer_thread, stack + 32 );
 
   return true;
 #else
@@ -227,8 +234,216 @@ static bool image_is_valid()
 
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 180 ), N( top - 10 ), NUMBER__from_integer_register( crc ), N( 0xffffffff ) );
 
+  uint32_t *arm_code = (void *) ro_address.r;
+  //uint32_t block = 0x27d98/4;
+  uint32_t block = 0/4;
+
+  asm volatile ( "dc civac, %[va]" : : [va] "r" (&arm_code[block]) );
+  arm_code[block] = 0xe1400070; // hvc 0
+  asm volatile ( "dc civac, %[va]" : : [va] "r" (&arm_code[block]) );
+
   return (crc == expected_crc);
 #endif
+}
+
+static struct {
+  uint32_t irq_basic_pending;
+  uint32_t irq_pending1;
+  uint32_t irq_pending2;
+  uint32_t fiq_control;
+  uint32_t enabled_irqs1;
+  uint32_t enabled_irqs2;
+  uint32_t enabled_basic_irqs;
+} irq_details = { 0 };
+
+static uint64_t irq_lock = 0;
+static bool irq_active = 0;
+
+static void update_virtual_irq()
+{
+  bool irq_now = ((irq_details.irq_pending1 & irq_details.enabled_irqs1) != 0)
+              || ((irq_details.irq_pending2 & irq_details.enabled_irqs2) != 0)
+              || ((irq_details.irq_basic_pending & irq_details.enabled_basic_irqs) != 0);
+
+  if (irq_now && !irq_active) {
+    asm ( "svc 8" );
+  }
+  else if (!irq_now && irq_active) {
+    asm ( "svc 9" );
+  }
+
+  irq_active = irq_now;
+}
+
+static void trigger_irq( int n )
+{
+  claim_lock( &irq_lock );
+
+  if (n < 32) {
+    irq_details.irq_pending1 |= (1 << n);
+  }
+  else if (n < 64) {
+    irq_details.irq_pending2 |= (1 << (n - 32));
+  }
+  else if (n < 72) {
+    irq_details.irq_basic_pending |= (1 << (n - 72));
+  }
+
+  update_virtual_irq();
+
+  release_lock( &irq_lock );
+}
+
+static bool irq_pending( int n )
+{
+  if (n < 32) {
+    return 0 != (irq_details.irq_pending1 & irq_details.enabled_irqs1 & (1 << n));
+  }
+  else if (n < 64) {
+    return 0 != (irq_details.irq_pending2 & irq_details.enabled_irqs2 & (1 << (n - 32)));
+  }
+  else if (n < 72) {
+    return 0 != (irq_details.irq_basic_pending & irq_details.enabled_basic_irqs & (1 << (n - 32)));
+  }
+  return false;
+}
+
+static void clear_irq( int n )
+{
+  claim_lock( &irq_lock );
+
+  if (n < 32) {
+    irq_details.irq_pending1 &= ~(1 << n);
+  }
+  else if (n < 64) {
+    irq_details.irq_pending2 &= ~(1 << (n - 32));
+  }
+  else if (n < 72) {
+    irq_details.irq_basic_pending &= ~(1 << (n - 72));
+  }
+
+  update_virtual_irq();
+
+  release_lock( &irq_lock );
+}
+
+static void bcm_2835_irq_registers_access( bool is_write, int register_index, uint64_t offset )
+{
+  claim_lock( &irq_lock );
+
+  switch (offset) {
+  case 0x200:
+    if (!is_write) {
+      uint32_t pending = irq_details.irq_basic_pending & irq_details.enabled_basic_irqs & 0xff;
+      if (irq_pending( 62 )) pending |= (1 << 20); // EMMC/SD card interface
+      if (irq_pending( 57 )) pending |= (1 << 19);
+      if (irq_pending( 56 )) pending |= (1 << 18);
+      if (irq_pending( 55 )) pending |= (1 << 17);
+      if (irq_pending( 54 )) pending |= (1 << 16);
+      if (irq_pending( 53 )) pending |= (1 << 15);
+      if (irq_pending( 19 )) pending |= (1 << 14);
+      if (irq_pending( 18 )) pending |= (1 << 13);
+      if (irq_pending( 10 )) pending |= (1 << 12);
+      if (irq_pending( 9 )) pending |= (1 << 11);
+      if (irq_pending( 7 )) pending |= (1 << 10);
+      if (irq_details.irq_pending1 & irq_details.enabled_irqs1 != 0) pending |= (1 << 9);
+      if (irq_details.irq_pending2 & irq_details.enabled_irqs2 != 0) pending |= (1 << 8);
+      set_partner_register( register_index, pending );
+    }
+    break;
+
+  case 0x204:
+    if (!is_write) {
+      set_partner_register( register_index, irq_details.irq_pending1 & irq_details.enabled_irqs1 );
+    }
+    break;
+
+  case 0x208:
+    if (!is_write) {
+      set_partner_register( register_index, irq_details.irq_pending2 & irq_details.enabled_irqs2 );
+    }
+    break;
+
+  case 0x20c:
+    if (is_write) {
+      irq_details.fiq_control = get_partner_register( register_index );
+      asm ( "brk 1" );
+    }
+    else {
+      set_partner_register( register_index, irq_details.fiq_control );
+    }
+    break;
+
+  case 0x210:
+    if (is_write) {
+      irq_details.enabled_irqs1 |= get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, irq_details.enabled_irqs1 );
+    }
+    break;
+
+  case 0x214:
+    if (is_write) {
+      irq_details.enabled_irqs2 |= get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, irq_details.enabled_irqs2 );
+    }
+    break;
+
+  case 0x218:
+    if (is_write) {
+      irq_details.enabled_basic_irqs |= get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, irq_details.enabled_basic_irqs );
+    }
+    break;
+
+  case 0x21c:
+    if (is_write) {
+      irq_details.enabled_irqs1 &= ~get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, irq_details.enabled_irqs1 );
+    }
+    break;
+
+  case 0x220:
+    if (is_write) {
+      irq_details.enabled_irqs2 &= ~get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, irq_details.enabled_irqs2 );
+    }
+    break;
+
+  case 0x224:
+    if (is_write) {
+      irq_details.enabled_basic_irqs &= ~get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, irq_details.enabled_basic_irqs );
+    }
+    break;
+
+  default: asm ( "brk 1" );
+  }
+
+  if (is_write) {
+    update_virtual_irq();
+  }
+
+  release_lock( &irq_lock );
+
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 50 ), N( irq_details.irq_basic_pending ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 60 ), N( irq_details.irq_pending1 ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 70 ), N( irq_details.irq_pending2 ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 80 ), N( irq_details.fiq_control ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 90 ), N( irq_details.enabled_irqs1 ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 100 ), N( irq_details.enabled_irqs2 ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 110 ), N( irq_details.enabled_basic_irqs ), N( 0xff00ff00 ) );
 }
 
 typedef union {
@@ -249,29 +464,41 @@ typedef union {
 #define WRITE_ONLY if (cp.is_read) asm ( "brk 1" );
 #define READ_WRITE( n ) static uint64_t v = n; if (cp.is_read) set_partner_register( cp.Rt, v ); else v = get_partner_register( cp.Rt );
 
+static int y = 40;
+static int x = 100;
+static int elc = 0xff0ff0f0;
+
 static void cp15_access( uint32_t syndrome )
 {
   copro_syndrome cp = { .raw = syndrome };
-static int y = 50;
-static int x = 100;
 
-TRIVIAL_NUMERIC_DISPLAY__show_4bits( tnd, N( x ), N( y ), N( cp.Opc1 ), N( 0xff0ff0f0 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_4bits( tnd, N( x+10 ), N( y ), N( cp.CRn ), N( 0xff0ff0f0 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_4bits( tnd, N( x+20 ), N( y ), N( cp.CRm ), N( 0xff0ff0f0 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_4bits( tnd, N( x+30 ), N( y ), N( cp.Opc2 ), N( 0xff0ff0f0 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_4bits( tnd, N( x+40 ), N( y ), N( cp.is_read ), N( 0xff0ff0f0 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_8bits( tnd, N( x+50 ), N( y ), N( cp.Rt ), N( 0xff0ff0f0 ) );
+if ((syndrome & 0xffc1e) != 0x41c14
+ && (syndrome & 0xffc1e) != 0x21c14
+ && (syndrome & 0xffc1e) != 0x81c14
+ && (syndrome & 0xffc1e) != 0x81c0a
+) {
 y+=10;
 if (y > 1000) {
   y = 50;
   x += 100;
+  if (x > 800) {
+    x = 100;
+    elc = elc ^ 0x00ffffff;
+  }
 }
+TRIVIAL_NUMERIC_DISPLAY__show_4bits( tnd, N( x ), N( y ), N( cp.Opc1 ), N( elc ) );
+TRIVIAL_NUMERIC_DISPLAY__show_4bits( tnd, N( x+10 ), N( y ), N( cp.CRn ), N( elc ) );
+TRIVIAL_NUMERIC_DISPLAY__show_4bits( tnd, N( x+20 ), N( y ), N( cp.CRm ), N( elc ) );
+TRIVIAL_NUMERIC_DISPLAY__show_4bits( tnd, N( x+30 ), N( y ), N( cp.Opc2 ), N( elc ) );
+TRIVIAL_NUMERIC_DISPLAY__show_4bits( tnd, N( x+40 ), N( y ), N( cp.is_read ), N( elc ) );
+TRIVIAL_NUMERIC_DISPLAY__show_8bits( tnd, N( x+50 ), N( y ), N( cp.Rt ), N( elc ) );
 asm ( "svc 0" );
+}
 
   switch (syndrome & 0xffc1e) { // CRm, CRn, Opc1, Opc2
   case 0x00000: READ_ONLY( 0x410fb767 ); break; // midr ~ ARM1176 - does VPIDR_EL2 ever get used?
   case 0xa0000: READ_ONLY( 0x80000f00 ); break; // mpidr
-  case 0x20000: { READ_ONLY( 0x1d152152 ); } break; // G7.2.34    CTR, Cache Type Register
+  case 0x20000: READ_ONLY( 0x1d152152 ); break; // G7.2.34    CTR, Cache Type Register
   case 0x00400: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( SCTLR_EL1, v ); } }; break; // SCTLR
   case 0x00c00: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( DACR32_EL2, v ); } } break; // G7.2.35 DACR, Domain Access Control Register
   case 0x40800: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( TCR_EL1, v ); } }; break; // Translation Table Base Control Register
@@ -283,12 +510,18 @@ asm ( "svc 0" );
   case 0x01c0a: WRITE_ONLY; break; // G7.2.76    ICIALLU, Instruction Cache Invalidate All to PoU
   case 0x0200e: WRITE_ONLY; break; // G7.2.130   TLBIALL, TLB Invalidate All
   case 0xc1c0a: WRITE_ONLY; break; // G7.2.21    BPIALL, Branch Predictor Invalidate All
-  case 0x81c14: WRITE_ONLY; asm ( "dsb sy" ); break; // G7.2.29    CP15DSB, Data Synchronization Barrier System instruction
-  case 0x81c0a: WRITE_ONLY; asm ( "isb sy" ); break; // G7.2.30    CP15ISB, Instruction Synchronization Barrier System instruction
+
+  // FIXME Can't really need to do a full flush, surely?
+  case 0x81c14: WRITE_ONLY; asm ( "dsb sy" ); asm ( "svc 0" ); break; // G7.2.29    CP15DSB, Data Synchronization Barrier System instruction
+  case 0x81c0a: WRITE_ONLY; asm ( "isb sy" ); asm ( "svc 0" ); break; // G7.2.30    CP15ISB, Instruction Synchronization Barrier System instruction
   case 0x24000: WRITE_ONLY; break; // G7.2.26    CLIDR, Cache Level ID Register
   case 0x01c0e: WRITE_ONLY; asm ( "isb sy\ndsb sy" ); break; // ARM DDI 0360F Invalidate Both Caches. Also flushes the branch target cache
   case 0xa1c14: WRITE_ONLY; asm ( "dmb sy" ); break; // G7.2.28         CP15DMB, Data Memory Barrier System instruction
   case 0x01c1c: WRITE_ONLY; asm ( "dmb sy" ); break; // Data Memory Barrier
+
+  case 0x41c14: WRITE_ONLY; break; // G7.2.40 DCCSW, Data Cache line Clean by Set/Way
+  case 0x21c14: break; // G7.2.38 DCCMVAC, Data Cache line Clean by VA to PoC
+
 
   case 0x00002: READ_ONLY( 0x00000111 ); break; // Read Proc Feature Register 0 (typo in ARM DDI 0360F)
   case 0x20002: READ_ONLY( 0x00000001 ); break; // Read Proc Feature Register 1
@@ -352,12 +585,16 @@ static void respond_to_tag_request( uint32_t *request )
   uint32_t *p = request;
 
   // Undocumented interface, afaics
+  uint32_t *virtual_Touch_buffer = 0;
   uint32_t *virtual_GPIO_buffer = 0;
 
   // Always assumes correct use
   p[1] = 0x80000000;
   p+=2;
   while (p[0] != 0) {
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 440 ), N( p[0] ), N( 0xffff00ff ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 450 ), N( p[1] ), N( 0xffff00ff ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 460 ), N( p[2] ), N( 0xffff00ff ) );
     // Always a valid request and response...
     // p[0] = tag
     // p[1] = buffer size (bytes)
@@ -413,6 +650,12 @@ static void respond_to_tag_request( uint32_t *request )
       }
       break;
 
+    case 0x0004801f: // ARM2VC_Tag_FBSetTouchBuf Touch screen
+      virtual_Touch_buffer = p[3];
+      // RISC OS: ; On success, firmware should overwrite the address with zero
+      p[3] = 0;
+      break;
+
     case 0x00048020: // ARM2VC_Tag_SetVirtGPIOBuf I don't know what this is for!
       virtual_GPIO_buffer = p[3];
       // RISC OS: ; On success, firmware should overwrite the address with zero
@@ -422,7 +665,6 @@ static void respond_to_tag_request( uint32_t *request )
     // Frame buffer
 
     default: // Unknown
-      TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 440 ), N( p[0] ), N( 0xffff0000 ) );
       asm ( "brk 1" );
       break;
     }
@@ -430,13 +672,141 @@ static void respond_to_tag_request( uint32_t *request )
   }
 }
 
+static struct {
+  uint32_t control_status;
+  uint64_t counter;
+  uint32_t compare[4];
+} system_timer = { 0 };
+
+static void timer_thread()
+{
+  uint32_t *arm_code = (void *) ro_address.r;
+  uint32_t count = 0;
+  for (;;) {
+    uint32_t colour = (system_timer.control_status != 0) ? 0xff00ff00 : 0xffffffff;
+    asm ( "svc 0" );
+    if (++count == 1000) {
+    count = 0;
+    for (int i = 0; i < 35; i++) {
+      uint64_t n = 0x44444444;
+      asm ( "mov x0, %[n]\nsvc 7\nmov %[r], x0" : [r] "=&r" (n) : [n] "r" (i) : "x0" );
+      TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 600 + 10*i ), NUMBER__from_integer_register( n ), N( colour ) );
+    }
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 40 ), N( system_timer.control_status ), N( colour ) );
+TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1500 ), N( 50 ), N( system_timer.counter ), N( colour ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 60 ), N( system_timer.compare[0] ), N( colour ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 70 ), N( system_timer.compare[1] ), N( colour ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 80 ), N( system_timer.compare[2] ), N( colour ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 90 ), N( system_timer.compare[3] ), N( colour ) );
+static stop_count = 0;
+if (++stop_count == 100) asm ( "brk 3" );
+    }
+
+    // Dumb, but accurate FIXME
+    int irq = 0;
+    for (int i = 0; i < 1000/16; i++) {
+      system_timer.counter += 16;
+
+      if ((system_timer.counter & 0xffffffff) == (0xfffffff0 & system_timer.compare[0])) {
+        system_timer.control_status |= (1 << 0); irq = true;
+      }
+      if ((system_timer.counter & 0xffffffff) == (0xfffffff0 & system_timer.compare[1])) {
+        system_timer.control_status |= (1 << 1); irq = true;
+      }
+      if ((system_timer.counter & 0xffffffff) == (0xfffffff0 & system_timer.compare[2])) {
+        system_timer.control_status |= (1 << 2); irq = true;
+      }
+      if ((system_timer.counter & 0xffffffff) == (0xfffffff0 & system_timer.compare[3])) {
+        system_timer.control_status |= (1 << 3); irq = true;
+      }
+    }
+
+if (0 &&irq) {
+  TRIVIAL_NUMERIC_DISPLAY__show_page( tnd );
+  for (;;) { asm ( "svc 0 " ); }
+}
+
+    if (irq) trigger_irq( 72 );
+    sleep_ms( 1 );
+  }
+}
+
 static void bcm_2835_system_timer_access( bool is_write, int register_index, uint64_t offset )
 {
   // FIXME! First access at 0fc009674
+  static uint32_t locked_high = 0;
+
+  switch (offset) {
+  case 0x00:
+    if (is_write) {
+      system_timer.control_status &= ~get_partner_register( register_index );
+      for (;;) {}
+    }
+    else {
+      set_partner_register( register_index, system_timer.control_status );
+    }
+    break;
+  case 0x04: 
+    {
+    uint64_t ticks = system_timer.counter;
+    locked_high = (ticks >> 32);
+
+    set_partner_register( register_index, ticks & 0xffffffff );
+    }
+    break;
+  case 0x08: 
+    set_partner_register( register_index, locked_high );
+    break;
+  case 0x0c ... 0x18: 
+  {
+    int n = (offset >> 4) & 3;
+    if (is_write) {
+      system_timer.compare[n] = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, system_timer.compare[n] );
+      // TODO: set a system_timer to interrupt the VM...
+    }
+    break;
+  }
+  default: asm ( "brk 1" );
+  }
+
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 40 ), N( system_timer.control_status ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1500 ), N( 50 ), N( system_timer.counter ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 60 ), N( system_timer.compare[0] ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 70 ), N( system_timer.compare[1] ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 80 ), N( system_timer.compare[2] ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 90 ), N( system_timer.compare[3] ), N( 0xff00ff00 ) );
 }
+
+extern struct __attribute__(( packed )) {
+  uint32_t bsc0[1024];
+} volatile  __attribute__(( aligned(4096) )) devices;
 
 static void bsc_access( unsigned device, bool is_write, int register_index, uint64_t offset )
 {
+  if (device >= 3) asm ( "brk 1" );
+
+  if (device == 1) {
+NUMBER colours[2] = { { .r = 0xff00ff00 }, { .r = 0xff00ffff } };
+static unsigned y = 600;
+
+    if (is_write) {
+      devices.bsc0[offset/4] = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, devices.bsc0[offset/4] );
+    }
+TRIVIAL_NUMERIC_DISPLAY__show_8bits( tnd, N( 1160 ), N( y ), N( offset ), colours[is_write] );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1200 ), N( y ), N( get_partner_register( register_index ) ), colours[is_write] );
+y += 10;
+if (y >= 1000) y -= 398;
+    return;
+  }
+  else {
+    asm ( "brk 1" );
+  }
   static struct {
     uint32_t Control;
     uint32_t Status;
@@ -446,18 +816,26 @@ static void bsc_access( unsigned device, bool is_write, int register_index, uint
     uint32_t Clock_Divider;
     uint32_t Data_Delay;
     uint32_t Clock_Stretch_Timeout;
-  } BSC[3];
+  } BSC[3] = { // BCM2835-ARM-Peripherals.pdf Section 3 (IIC/I2C).
+    { .Status = 0x50, .Clock_Divider = 0x5dc, .Data_Delay = 0x00300030, .Clock_Stretch_Timeout = 0x40 },
+    { .Status = 0x50, .Clock_Divider = 0x5dc, .Data_Delay = 0x00300030, .Clock_Stretch_Timeout = 0x40 },
+    { .Status = 0x50, .Clock_Divider = 0x5dc, .Data_Delay = 0x00300030, .Clock_Stretch_Timeout = 0x40 }
+  };
+
+  uint8_t *data = 0;
 
 // FIXME Pretend to be something on the other end of the bus (or allow access to the real hardware)
-unsigned y = 800;
+static unsigned y = 600;
 if (is_write) {
 TRIVIAL_NUMERIC_DISPLAY__show_8bits( tnd, N( 1160 ), N( y ), N( offset ), N( 0xff00ff00 ) );
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1200 ), N( y ), N( get_partner_register( register_index ) ), N( 0xff00ff00 ) );
 }
 else {
 TRIVIAL_NUMERIC_DISPLAY__show_8bits( tnd, N( 1160 ), N( y ), N( offset ), N( 0xff00ffff ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1200 ), N( y ), N( (&BSC[device].Control)[offset/4] ), N( 0xff00ffff ) );
 }
 y += 10;
+if (y >= 1000) y -= 398;
 
   if (device >= 3) asm ( "brk 1" );
 
@@ -466,6 +844,15 @@ y += 10;
     {
       if (is_write) {
         BSC[device].Control = get_partner_register( register_index );
+        if (BSC[device].Control == 0x8011) {
+          // Clear FIFO and read from set address
+          switch (BSC[device].Slave_Address) {
+          case 0x68: // ???
+            data = "Hello world";
+            break;
+          default: asm ( "brk 1" );
+          }
+        }
       }
       else {
         set_partner_register( register_index, BSC[device].Control );
@@ -475,10 +862,10 @@ y += 10;
   case 0x04: // Status
     {
       if (is_write) {
-        BSC[device].Status = get_partner_register( register_index );
+        BSC[device].Status &= ~get_partner_register( register_index );
       }
       else {
-        set_partner_register( register_index, BSC[device].Status );
+        set_partner_register( register_index, BSC[device].Status | ((data != 0) ? 0b100001 : 0) );
       }
     }
     break;
@@ -505,10 +892,10 @@ y += 10;
   case 0x10: // Data_FIFO
     {
       if (is_write) {
-        BSC[device].Data_FIFO = get_partner_register( register_index );
+        asm ( "brk 1" );
       }
       else {
-        set_partner_register( register_index, BSC[device].Data_FIFO );
+        set_partner_register( register_index, data == 0 ? 0 : *data++ );
       }
     }
     break;
@@ -544,6 +931,290 @@ y += 10;
     break;
   default: asm ( "brk 1" );
   }
+}
+
+static struct {
+  uint32_t ARG2; // 0x0 ACMD23 Argument
+  uint32_t BLKSIZECNT; // 0x4 Block Size and Count
+  uint32_t ARG1; // 0x8 Argument
+  uint32_t CMDTM; // 0xc Command and Transfer Mode
+  uint32_t RESP0; // 0x10 Response bits 31 : 0
+  uint32_t RESP1; // 0x14 Response bits 63 : 32
+  uint32_t RESP2; // 0x18 Page Response bits 95 : 64
+  uint32_t RESP3; // 0x1c Response bits 127 : 96
+  uint32_t DATA; // 0x20 Data
+  uint32_t STATUS; // 0x24 Status
+  uint32_t CONTROL0; // 0x28 Host Configuration bits
+  uint32_t CONTROL1; // 0x2c Host Configuration bits
+  uint32_t INTERRUPT; // 0x30 Interrupt Flags
+  uint32_t IRPT_MASK; // 0x34 Interrupt Flag Enable
+  uint32_t IRPT_EN; // 0x38 Interrupt Generation Enable
+  uint32_t CONTROL2; // 0x3c Host Configuration bits
+  uint32_t FORCE_IRPT; // 0x50 Force Interrupt Event
+  uint32_t BOOT_TIMEOUT; // 0x70 Timeout in boot mode
+  uint32_t DBG_SEL; // 0x74 Debug Bus Configuration
+  uint32_t EXRDFIFO_CFG; // 0x80 Extension FIFO Configuration
+  uint32_t EXRDFIFO_EN; // 0x84 Extension FIFO Enable
+  uint32_t TUNE_STEP; // 0x88 Delay per card clock tuning step
+  uint32_t TUNE_STEPS_STD; // 0x8c Card clock tuning steps for SDR
+  uint32_t TUNE_STEPS_DDR; // 0x90 Card clock tuning steps for DDR
+  uint32_t SPI_INT_SPT; // 0xf0 SPI Interrupt Support
+  uint32_t SLOTISR_VER; // 0xfc Slot Interrupt Status and Version
+} emmc_state = { .CONTROL1 = 7 };
+
+// Use for all values that can be affected by more than one thread
+static uint64_t emmc_state_lock = 0;
+
+static uint32_t sdcard_thread = 0;
+
+static void sdcard()
+{
+  sdcard_thread = this_thread;
+
+  for (;;) {
+    wait_until_woken();
+    switch (emmc_state.CMDTM >> 24) {
+    case 0x07: // CMD7_SELECT_DESELECT_CARD
+      sleep_ms( 1 ); // Timing check?
+      claim_lock( &emmc_state_lock );
+      emmc_state.STATUS &= ~1; // CMD_INHIBIT
+      emmc_state.INTERRUPT |= 1; // CMD_DONE
+      if (0 != (emmc_state.INTERRUPT & emmc_state.IRPT_MASK)) {
+        trigger_irq( 62 ); // Also basic pending bit 20
+      }
+      release_lock( &emmc_state_lock );
+      break;
+    default: asm ( "brk 1" );
+    }
+  }
+}
+
+static void bcm_2835_emmc_access( bool is_write, int register_index, uint64_t offset )
+{
+  claim_lock( &emmc_state_lock );
+
+  switch (offset) {
+  case 0x0: // ARG2
+    if (is_write) {
+      emmc_state.ARG2 = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.ARG2 );
+    }
+    break;
+  case 0x4: // BLKSIZECNT
+    if (is_write) {
+      emmc_state.BLKSIZECNT = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.BLKSIZECNT );
+    }
+    break;
+  case 0x8: // ARG1
+    if (is_write) {
+      emmc_state.ARG1 = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.ARG1 );
+    }
+    break;
+  case 0xc: // CMDTM
+    if (is_write) {
+      emmc_state.CMDTM = get_partner_register( register_index );
+      emmc_state.STATUS |= 1; // CMD_INHIBIT
+      wake_thread( sdcard_thread );
+      yield(); // Needed? Not good. FIXME
+    }
+    else {
+      set_partner_register( register_index, emmc_state.CMDTM );
+    }
+    break;
+  case 0x10: // RESP0
+    if (is_write) {
+      emmc_state.RESP0 = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.RESP0 );
+    }
+    break;
+  case 0x14: // RESP1
+    if (is_write) {
+      emmc_state.RESP1 = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.RESP1 );
+    }
+    break;
+  case 0x18: // RESP2
+    if (is_write) {
+      emmc_state.RESP2 = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.RESP2 );
+    }
+    break;
+  case 0x1c: // RESP3
+    if (is_write) {
+      emmc_state.RESP3 = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.RESP3 );
+    }
+    break;
+  case 0x20: // DATA
+    if (is_write) {
+      emmc_state.DATA = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.DATA );
+    }
+    break;
+  case 0x24: // STATUS
+    if (is_write) {
+      emmc_state.STATUS = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.STATUS );
+    }
+    break;
+  case 0x28: // CONTROL0
+    if (is_write) {
+      emmc_state.CONTROL0 = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.CONTROL0 );
+    }
+    break;
+  case 0x2c: // CONTROL1
+    if (is_write) {
+      emmc_state.CONTROL1 = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.CONTROL1 );
+    }
+    break;
+  case 0x30: // INTERRUPT
+    if (is_write) {
+      emmc_state.INTERRUPT &= ~get_partner_register( register_index );
+      if (0 == (emmc_state.INTERRUPT & emmc_state.IRPT_MASK)) {
+        clear_irq( 62 ); // Also basic pending bit 20
+      }
+    }
+    else {
+      set_partner_register( register_index, emmc_state.INTERRUPT );
+    }
+    break;
+  case 0x34: // IRPT_MASK
+    if (is_write) {
+      emmc_state.IRPT_MASK = get_partner_register( register_index );
+      if (0 != (emmc_state.INTERRUPT & emmc_state.IRPT_MASK)) {
+        trigger_irq( 62 ); // Also basic pending bit 20
+      }
+    }
+    else {
+      set_partner_register( register_index, emmc_state.IRPT_MASK );
+    }
+    break;
+  case 0x38: // IRPT_EN
+    if (is_write) {
+      emmc_state.IRPT_EN = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.IRPT_EN );
+    }
+    break;
+  case 0x3c: // CONTROL2
+    if (is_write) {
+      emmc_state.CONTROL2 = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.CONTROL2 );
+    }
+    break;
+  case 0x50: // FORCE_IRPT
+    if (is_write) {
+      emmc_state.FORCE_IRPT = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.FORCE_IRPT );
+    }
+    break;
+  case 0x70: // BOOT_TIMEOUT
+    if (is_write) {
+      emmc_state.BOOT_TIMEOUT = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.BOOT_TIMEOUT );
+    }
+    break;
+  case 0x74: // DBG_SEL
+    if (is_write) {
+      emmc_state.DBG_SEL = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.DBG_SEL );
+    }
+    break;
+  case 0x80: // EXRDFIFO_CFG
+    if (is_write) {
+      emmc_state.EXRDFIFO_CFG = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.EXRDFIFO_CFG );
+    }
+    break;
+  case 0x84: // EXRDFIFO_EN
+    if (is_write) {
+      emmc_state.EXRDFIFO_EN = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.EXRDFIFO_EN );
+    }
+    break;
+  case 0x88: // TUNE_STEP
+    if (is_write) {
+      emmc_state.TUNE_STEP = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.TUNE_STEP );
+    }
+    break;
+  case 0x8c: // TUNE_STEPS_STD
+    if (is_write) {
+      emmc_state.TUNE_STEPS_STD = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.TUNE_STEPS_STD );
+    }
+    break;
+  case 0x90: // TUNE_STEPS_DDR
+    if (is_write) {
+      emmc_state.TUNE_STEPS_DDR = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.TUNE_STEPS_DDR );
+    }
+    break;
+  case 0xf0: // SPI_INT_SPT
+    if (is_write) {
+      emmc_state.SPI_INT_SPT = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.SPI_INT_SPT );
+    }
+    break;
+  case 0xfc: // SLOTISR_VER
+    if (is_write) {
+      emmc_state.SLOTISR_VER = get_partner_register( register_index );
+    }
+    else {
+      set_partner_register( register_index, emmc_state.SLOTISR_VER );
+    }
+    break;
+  default: asm ( "brk 1" );
+  }
+
+  release_lock( &emmc_state_lock );
 }
 
 static void stage2_data_abort( uint64_t syndrome, uint64_t fault_address, uint64_t intermediate_physical_address )
@@ -588,9 +1259,14 @@ TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1500 ), N( 380 ), NUMBER__from_int
       else { asm ( "brk 1" ); }
       break;
     }
+
+  case BASE | 0x00b200 ... BASE | 0x00b2ff:
+    bcm_2835_irq_registers_access( s.WnR, s.SRT, physical_fault_address & 0xfff ); break;
+
   case BASE | 0x00b880: // Mailbox 0 data, return the last request that we processed when it was received
     {
       if (!s.WnR) {
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 420 ), NUMBER__from_integer_register( mailbox_request ), N( 0xff00ff00 ) );
         set_partner_register( s.SRT, mailbox_request );
       }
       else { asm ( "brk 1" ); }
@@ -647,6 +1323,9 @@ asm ( "svc 0" );
 
   case PAGE( 0x003000 ):
     bcm_2835_system_timer_access( s.WnR, s.SRT, physical_fault_address & 0xfff ); break;
+
+  case PAGE( 0x300000 ):
+    bcm_2835_emmc_access( s.WnR, s.SRT, physical_fault_address & 0xfff ); break;
 
   default:
     asm ( "brk 1" );
@@ -740,8 +1419,21 @@ asm ( "svc 0" );
   return new_pc;
 }
 
+void map_page( uint64_t physical, void *virtual )
+{
+  PHYSICAL_MEMORY_BLOCK device_page = DRIVER_SYSTEM__get_device_page( driver_system(), NUMBER__from_integer_register( physical ) );
+  DRIVER_SYSTEM__map_at( driver_system(), device_page, NUMBER__from_integer_register( (integer_register) virtual ) );
+}
+
+
 void entry()
 {
+
+  // Give RISC OS control over the BSC interface
+  map_page( 0x3f804000, (void*) &devices.bsc0 );
+
+
+
   tnd = TRIVIAL_NUMERIC_DISPLAY__get_service( "Trivial Numeric Display", -1 );
 
   PHYSICAL_MEMORY_BLOCK riscos_memory;
@@ -750,9 +1442,21 @@ void entry()
     asm ( "brk 2" );
   }
 
+
+{
+NUMBER page = { .r = 0x02004000 };
+NUMBER size = { .r = 4096 };
+TRIVIAL_NUMERIC_DISPLAY__set_page_to_show( tnd, PHYSICAL_MEMORY_BLOCK__subblock( riscos_memory, page, size ), page );
+}
+
   load_guest_os( riscos_memory );
 
   DRIVER_SYSTEM__map_at( driver_system(), riscos_memory, ro_address );
+
+uint32_t *arm_code = (void *) ro_address.r;
+for (int i = 0x500000 / 4; i < 0x4000000/4; i++) {
+  arm_code[i] = i;
+}
 
   if (image_is_valid()) {
     // Establish a translation table mapping the VM "physical" addresses to real memory
@@ -779,16 +1483,34 @@ void entry()
     }
     DRIVER_SYSTEM__make_partner_thread( driver_system(), PHYSICAL_MEMORY_BLOCK__duplicate_to_pass_to( driver_system().r, el2_tt ) );
 
-    uint64_t hcr2 = 0b1000001110000000000000011111110110000111011;
+    uint64_t hcr2 = 0b0001110000000000000011111110110000111011;
+    // uint64_t hcr2 = 0b100 0001 1100 0000 0000 0000 1111 1110 1100 0011 1011;
+    // 0 1 3 4 5 10 11 13 14 15 16 17 18 19 34 35 36 42
 
     set_vm_system_register( HCR_EL2, hcr2 );
 
+    // This seems to override the bits in HCR_EL2:
+    uint32_t cp15_traps = 0xffff;
+    // cp15_traps &= ~(1 << 7); // Don't trap cache maintenance instructions.  STOPS WORKING!
+    cp15_traps &= ~(1 << 8); // Don't trap TLB maintenance instructions.
+    set_vm_system_register( HSTR_EL2, cp15_traps );
+
+    // Devices requiring asynchronous behaviour:
+    static uint64_t __attribute__(( aligned( 16 ) )) stack[32];
+    create_thread( timer_thread, stack + 32 );
+    static uint64_t __attribute__(( aligned( 16 ) )) sdcard_stack[32];
+    create_thread( sdcard, sdcard_stack + 32 );
+    while (sdcard_thread == 0) { yield(); }
+
     uint64_t next_pc = 0;
 int events = 0;
+
     for (;;) {
 asm ( "svc 0" );
       next_pc = switch_to_partner( vm_handler, next_pc );
-if (++events > 0x400)
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( x-70 ), N( y ), N( next_pc ), N( elc ) );
+// if (next_pc == 0xfc02b414) { for (;;) { asm ( "svc 0" ); } }  ReadCPUFeatures
+if (0 && ++events > 0x3a0)
 sleep_ms( 5000 );
     }
   }
