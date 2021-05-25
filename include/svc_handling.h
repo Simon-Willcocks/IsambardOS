@@ -655,12 +655,28 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
       if (thread->current_map != partner->current_map) BSOD( __COUNTER__ );
 
       unsigned int register_index = thread->regs[0];
-      if (register_index >= 18) BSOD( __COUNTER__ ); // Register code, takes care of _svc registers, etc.
+      if (register_index >= 20) BSOD( __COUNTER__ );
 
       uint64_t *sysregs = (void*) &vm[1]; // FIXME more than one vm!
 
       asm ( "dc civac, %[r]" : : [r] "r" (&sysregs[register_index]) );
       sysregs[register_index] = thread->regs[1];
+      asm ( "dsb sy\ndc cvac, %[r]" : : [r] "r" (&sysregs[register_index]) );
+    }
+    return result;
+  case ISAMBARD_GET_VM_SYSTEM_REGISTER:
+    {
+      thread_context *partner = thread->partner;
+      if (partner == 0) BSOD( __COUNTER__ );
+      if (thread->current_map != partner->current_map) BSOD( __COUNTER__ );
+
+      unsigned int register_index = thread->regs[0];
+      if (register_index >= 20) BSOD( __COUNTER__ ); // FIXME: 20 = number of system registers stored in vm_state
+
+      uint64_t *sysregs = (void*) &vm[1]; // FIXME more than one vm!
+
+      asm ( "dc civac, %[r]" : : [r] "r" (&sysregs[register_index]) );
+      thread->regs[0] = sysregs[register_index];
       asm ( "dsb sy\ndc cvac, %[r]" : : [r] "r" (&sysregs[register_index]) );
     }
     return result;

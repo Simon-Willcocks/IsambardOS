@@ -67,9 +67,9 @@ static void show_thread( thread_context *thread, uint32_t x, uint32_t colour )
 {
   thread = (void *) (((uint64_t) thread) & lomem_bits);
 
-  show_qword( x, 100, (uint64_t) thread, colour );
+  show_qword( x, 430, (uint64_t) thread, colour );
   invalidate_all_caches();
-  for (int i = 0; i < 31; i++) { show_qword( x, 120+20*i, thread->regs[i], colour ); }
+  for (int i = 0; i < 31; i++) { show_qword( x, 450+10*i, thread->regs[i], colour ); }
 
   show_qword( x, 800, thread->prev, colour );
   show_qword( x, 810, thread->next, colour );
@@ -124,20 +124,20 @@ extern Aarch64_VMSA_entry kernel_tt_l2[16];
   }
   asm ( "dsb sy" );
 
-  for (int i = 0; i < 34; i++) { show_qword( 200, 120+20*i, c_bsod_regs[i], White ); }
+  for (int i = 0; i < 34; i++) { show_qword( 200, 450+10*i, c_bsod_regs[i], White ); }
   thread_context *runnable;
   asm ( "mov %[t], sp\norr %[t], %[t], #0xff0\nldr %[t], [%[t],#8]"
         : [t] "=&r" (runnable) );
 
   runnable = (void *) (((uint64_t) runnable) & lomem_bits);
   invalidate_all_caches();
-  show_thread( runnable, 400, Green );
+  show_thread( runnable, 440, Green );
   invalidate_all_caches();
   show_thread( runnable->partner, 600, Yellow );
 
   {
-  int y = 120;
-#define show( reg ) { show_qword( 1200, y, vm[1].reg, White ); y += 20; }
+  int y = 450;
+#define show( reg ) { show_qword( 1000, y, vm[1].reg, White ); y += 10; }
   show( cntkctl_el1 );
   show( csselr_el1 );
 
@@ -153,6 +153,9 @@ extern Aarch64_VMSA_entry kernel_tt_l2[16];
   show( actlr_el1 );
   show( fpexc32_el2 ); // Placeholder
 
+  show( esr_el1 );
+  show( far_el1 );
+
   show( vttbr_el2 );
   show( hcr_el2 );
   show( hstr_el2 );
@@ -164,8 +167,8 @@ extern Aarch64_VMSA_entry kernel_tt_l2[16];
 #undef show
 }
   {
-  int y = 120;
-#define show( reg ) { uint64_t r; asm ( "mrs %[r], "#reg : [r] "=r" (r) ); show_qword( 10, y, r, White ); y += 20; }
+  int y = 450;
+#define show( reg ) { uint64_t r; asm ( "mrs %[r], "#reg : [r] "=r" (r) ); show_qword( 10, y, r, White ); y += 10; }
 //show( cntkctl_el1 );
 //show( csselr_el1 );
 //show( mair_el1 );
@@ -179,12 +182,12 @@ show( vttbr_el2 );
 show( hstr_el2 );
 show( vmpidr_el2 );
 show( vpidr_el2 );
-y += 10;
+y += 5;
 show( vtcr_el2 );
 show( hpfar_el2 );
 show( ifsr32_el2 );
 show( isr_el1 );
-y += 20;
+y += 10;
 show( far_el1 );
 show( elr_el1 );
 show( esr_el1 );
@@ -196,7 +199,7 @@ show( ttbr1_el1 );
 y += 2;
 show( sp_el1 );
 show( vbar_el1 );
-y += 20;
+y += 10;
 show( far_el2 );
 show( elr_el2 );
 show( esr_el2 );
@@ -209,14 +212,14 @@ show( sctlr_el2 );
   if (currentel == 0xc) {
 show( sp_el2 );
 show( vbar_el2 );
-y += 20;
+y += 10;
 show( far_el3 );
 show( elr_el3 );
 show( esr_el3 );
 show( spsr_el3 );
 show( sctlr_el3 );
 show( vbar_el3 );
-y += 10;
+y += 5;
 show( scr_el3 );
   }
 }
@@ -301,6 +304,7 @@ for (int i = 0; i < 4; i++)
     SAVE_SYSTEM_REGISTER_PAIR( tcr_el1, ttbr0_el1 ) \
     SAVE_SYSTEM_REGISTER_PAIR( ttbr1_el1, vbar_el1 ) \
     SAVE_SYSTEM_REGISTER_PAIR( actlr_el1, fpexc32_el2 ) \
+    SAVE_SYSTEM_REGISTER_PAIR( esr_el1, far_el1 ) \
     asm ( \
       "\n  mrs x5, hcr_el2" \
       "\n  stp x2, x5, [x3, #%[n1off]]" \
@@ -348,6 +352,7 @@ for (int i = 0; i < 4; i++)
     LOAD_SYSTEM_REGISTER_PAIR( tcr_el1, ttbr0_el1 ) \
     LOAD_SYSTEM_REGISTER_PAIR( ttbr1_el1, vbar_el1 ) \
     LOAD_SYSTEM_REGISTER_PAIR( actlr_el1, fpexc32_el2 ) \
+    LOAD_SYSTEM_REGISTER_PAIR( esr_el1, far_el1 ) \
     LOAD_SYSTEM_REGISTER_PAIR( vttbr_el2, hcr_el2 ) \
     LOAD_SYSTEM_REGISTER_PAIR( hstr_el2, vmpidr_el2 ) \
     LOAD_SYSTEM_REGISTER_PAIR( vpidr_el2, vtcr_el2 ) \
@@ -534,6 +539,13 @@ for (int i = 0; i < 4; i++)
 \
     "\n  ldp x2, x3, [sp, #16]" \
     "\n  ldp x0, x1, [sp], #32" \
+\
+    "\n  // These can't be run under secure el0, afaics..." \
+    "\n  DSB sy // FIXME: what's really needed?" \
+    "\n  ISB sy // FIXME: what's really needed?" \
+    "\n  IC IALLU // FIXME: what's really needed?" \
+    "\n  TLBI ALLE2 // FIXME: what's really needed?" \
+    "\n  TLBI VMALLS12E1IS // FIXME: what's really needed?" \
 \
     "\n  smc #0 // Ask EL3 to switch to partner" \
     : : \

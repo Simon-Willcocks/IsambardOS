@@ -112,3 +112,12 @@ asm ( ".section .text"
     "\n\tret"
     "\n.previous" );
 
+
+asm ( ".section .text"
+    GLOBAL_FUNCTION( get_vm_system_register )
+    "\n\tstp x29, x30, [sp, #-32]!"
+    "\n\tsvc " ENSTRING( ISAMBARD_GET_VM_SYSTEM_REGISTER )
+    "\n\tldp x29, x30, [sp], #32"
+    "\n\tret"
+    "\n.previous" );
+

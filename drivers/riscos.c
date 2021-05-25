@@ -23,11 +23,25 @@ static uint32_t const expected_crc = 0x0c84b58f;
 
 static uint64_t vm_memory_base = 0;
 
+// Just for debug
+uint32_t ttbr0_el1 = 0;
+
+PHYSICAL_MEMORY_BLOCK riscos_memory;
+
 ISAMBARD_INTERFACE( TRIVIAL_NUMERIC_DISPLAY )
 #include "interfaces/client/TRIVIAL_NUMERIC_DISPLAY.h"
 #define N( n ) NUMBER__from_integer_register( n )
 
 TRIVIAL_NUMERIC_DISPLAY tnd = {};
+
+void show_state()
+{
+  for (int i = 0; i < 34; i++) {
+    uint64_t r;
+    asm ( "mov x0, %[n]\nsvc 7\nmov %[r], x0" : [r] "=&r" (r) : [n] "r" (i) : "x0" );
+    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 260+11*i ), N( r ), N( 0xffff8080 ) );
+  }
+}
 
 static void load_guest_os( PHYSICAL_MEMORY_BLOCK riscos_memory )
 {
@@ -97,6 +111,20 @@ static void qemu_timer_thread()
 
     sleep_ms( 25 );
   }
+}
+#endif
+
+#define TRACING
+#ifdef TRACING
+
+static void set_block( uint32_t addr, int code )
+{
+  uint32_t *arm_code = (void *) ro_address.r;
+  uint32_t block = addr/4;
+
+  asm volatile ( "dc civac, %[va]" : : [va] "r" (&arm_code[block]) );
+  arm_code[block] = 0xe1400070 | (code & 0xf) | ((code & 0xfff0) << 4); // hvc #code
+  asm volatile ( "dc civac, %[va]" : : [va] "r" (&arm_code[block]) );
 }
 #endif
 
@@ -234,14 +262,6 @@ static bool image_is_valid()
 
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 180 ), N( top - 10 ), NUMBER__from_integer_register( crc ), N( 0xffffffff ) );
 
-  uint32_t *arm_code = (void *) ro_address.r;
-  //uint32_t block = 0x27d98/4;
-  uint32_t block = 0/4;
-
-  asm volatile ( "dc civac, %[va]" : : [va] "r" (&arm_code[block]) );
-  arm_code[block] = 0xe1400070; // hvc 0
-  asm volatile ( "dc civac, %[va]" : : [va] "r" (&arm_code[block]) );
-
   return (crc == expected_crc);
 #endif
 }
@@ -254,7 +274,7 @@ static struct {
   uint32_t enabled_irqs1;
   uint32_t enabled_irqs2;
   uint32_t enabled_basic_irqs;
-} irq_details = { 0 };
+} volatile irq_details = { 0 };
 
 static uint64_t irq_lock = 0;
 static bool irq_active = 0;
@@ -286,7 +306,7 @@ static void trigger_irq( int n )
     irq_details.irq_pending2 |= (1 << (n - 32));
   }
   else if (n < 72) {
-    irq_details.irq_basic_pending |= (1 << (n - 72));
+    irq_details.irq_basic_pending |= (1 << (n - 64));
   }
 
   update_virtual_irq();
@@ -303,7 +323,7 @@ static bool irq_pending( int n )
     return 0 != (irq_details.irq_pending2 & irq_details.enabled_irqs2 & (1 << (n - 32)));
   }
   else if (n < 72) {
-    return 0 != (irq_details.irq_basic_pending & irq_details.enabled_basic_irqs & (1 << (n - 32)));
+    return 0 != (irq_details.irq_basic_pending & irq_details.enabled_basic_irqs & (1 << (n - 64)));
   }
   return false;
 }
@@ -319,7 +339,7 @@ static void clear_irq( int n )
     irq_details.irq_pending2 &= ~(1 << (n - 32));
   }
   else if (n < 72) {
-    irq_details.irq_basic_pending &= ~(1 << (n - 72));
+    irq_details.irq_basic_pending &= ~(1 << (n - 64));
   }
 
   update_virtual_irq();
@@ -437,13 +457,13 @@ static void bcm_2835_irq_registers_access( bool is_write, int register_index, ui
 
   release_lock( &irq_lock );
 
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 50 ), N( irq_details.irq_basic_pending ), N( 0xff00ff00 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 60 ), N( irq_details.irq_pending1 ), N( 0xff00ff00 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 70 ), N( irq_details.irq_pending2 ), N( 0xff00ff00 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 80 ), N( irq_details.fiq_control ), N( 0xff00ff00 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 90 ), N( irq_details.enabled_irqs1 ), N( 0xff00ff00 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 100 ), N( irq_details.enabled_irqs2 ), N( 0xff00ff00 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( 110 ), N( irq_details.enabled_basic_irqs ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1250 ), N( 50 ), N( irq_details.irq_basic_pending ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1250 ), N( 60 ), N( irq_details.irq_pending1 ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1250 ), N( 70 ), N( irq_details.irq_pending2 ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1250 ), N( 80 ), N( irq_details.fiq_control ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1250 ), N( 90 ), N( irq_details.enabled_irqs1 ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1250 ), N( 100 ), N( irq_details.enabled_irqs2 ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1250 ), N( 110 ), N( irq_details.enabled_basic_irqs ), N( 0xff00ff00 ) );
 }
 
 typedef union {
@@ -467,16 +487,19 @@ typedef union {
 static int y = 40;
 static int x = 100;
 static int elc = 0xff0ff0f0;
+static bool show;
+
 
 static void cp15_access( uint32_t syndrome )
 {
   copro_syndrome cp = { .raw = syndrome };
-
+/*
 if ((syndrome & 0xffc1e) != 0x41c14
  && (syndrome & 0xffc1e) != 0x21c14
  && (syndrome & 0xffc1e) != 0x81c14
  && (syndrome & 0xffc1e) != 0x81c0a
 ) {
+*/ if (show) {
 y+=10;
 if (y > 1000) {
   y = 50;
@@ -496,20 +519,46 @@ asm ( "svc 0" );
 }
 
   switch (syndrome & 0xffc1e) { // CRm, CRn, Opc1, Opc2
-  case 0x00000: READ_ONLY( 0x410fb767 ); break; // midr ~ ARM1176 - does VPIDR_EL2 ever get used?
+  case 0x00000: READ_ONLY( 0x410fb767 ); break; // midr ~ ARM1176 - does VPIDR_EL2 ever get used?  ARM11_HAL
   case 0xa0000: READ_ONLY( 0x80000f00 ); break; // mpidr
   case 0x20000: READ_ONLY( 0x1d152152 ); break; // G7.2.34    CTR, Cache Type Register
   case 0x00400: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( SCTLR_EL1, v ); } }; break; // SCTLR
   case 0x00c00: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( DACR32_EL2, v ); } } break; // G7.2.35 DACR, Domain Access Control Register
   case 0x40800: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( TCR_EL1, v ); } }; break; // Translation Table Base Control Register
-  case 0x00800: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( TTBR0_EL1, v ); } }; break; // Translation Table Base Register 0
+  case 0x00800: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( TTBR0_EL1, v ); ttbr0_el1 = v; } }; break; // Translation Table Base Register 0
   //case 0x20400: { READ_WRITE( 7 ); if (!cp.is_read) { set_vm_system_register( ACTLR_EL1, v ); } }; break; // G7.2.1 ACTLR, Auxiliary Control Register  -- Fixing errata in Kernel/s/HAL:1031
   case 0x20400: { READ_WRITE( 7 ); }; break; // G7.2.1 ACTLR, Auxiliary Control Register
 
   // Question: why are these being trapped, I thought that was optional...?
+  // Currently, the extra code in EL2 should perform these functions, but for every event, which is not good.
   case 0x01c0a: WRITE_ONLY; break; // G7.2.76    ICIALLU, Instruction Cache Invalidate All to PoU
   case 0x0200e: WRITE_ONLY; break; // G7.2.130   TLBIALL, TLB Invalidate All
   case 0xc1c0a: WRITE_ONLY; break; // G7.2.21    BPIALL, Branch Predictor Invalidate All
+  case 0x2200a: WRITE_ONLY; break; // Invalidate Instruction TLB Entry by MVA ARM DDI 0333H 3-87
+  case 0x2200c: WRITE_ONLY; break; // Invalidate Data TLB Entry by MVA ARM DDI 0333H 3-87
+
+// Can I do these two?
+  // Note: RISC OS doesn't seem to use the equivalent registers for instruction aborts, lr is enough.
+  case 0x01800: // G7.2.43 DFAR, Data Fault Address Register
+    {
+      if (cp.is_read) {
+        set_partner_register( cp.Rt, get_vm_system_register( FAR_EL1 ) );
+      }
+      else {
+        set_vm_system_register( FAR_EL1, get_partner_register( cp.Rt ) );
+      }
+      break;
+    }
+  case 0x01400: // G7.2.?? DFSR, Data Fault Status Register
+    {
+      if (cp.is_read) {
+        set_partner_register( cp.Rt, get_vm_system_register( ESR_EL1 ) );
+      }
+      else {
+        set_vm_system_register( ESR_EL1, get_partner_register( cp.Rt ) );
+      }
+      break;
+    }
 
   // FIXME Can't really need to do a full flush, surely?
   case 0x81c14: WRITE_ONLY; asm ( "dsb sy" ); asm ( "svc 0" ); break; // G7.2.29    CP15DSB, Data Synchronization Barrier System instruction
@@ -577,7 +626,79 @@ static void vmrs_access( uint32_t syndrome ) { asm ( "brk 1" ); }
 static void pointer_authentication( uint32_t syndrome ) { asm ( "brk 1" ); }
 static void cp14_access_RR( uint32_t syndrome ) { asm ( "brk 1" ); }
 static void illegal_execution_state( uint32_t syndrome ) { asm ( "brk 1" ); }
-static void hvc32( uint32_t syndrome ) { asm ( "brk 1" ); }
+
+static void hvc32( uint32_t syndrome ) { 
+
+NUMBER address = { .r = ttbr0_el1 & ~0xfff };
+NUMBER size = { .r = 4096 };
+
+static int x = 200;
+static int y = 1000;
+
+  show_state();
+
+switch ((syndrome & 0xffff)) {
+case 0:
+for (int i = 0; i < 4; i++) {
+// This is going to break fairly quickly!
+  PHYSICAL_MEMORY_BLOCK page = PHYSICAL_MEMORY_BLOCK__subblock( riscos_memory, address, size );
+  TRIVIAL_NUMERIC_DISPLAY__set_page_to_show( tnd, page, address );
+
+  TRIVIAL_NUMERIC_DISPLAY__show_page( tnd );
+  sleep_ms( 10000 );
+  address.r += 4096;
+}
+break;
+case 1:
+{
+  set_partner_register( 10, 20 ); // mov sl, #20
+  uint64_t c = get_partner_register( 2 );
+  TRIVIAL_NUMERIC_DISPLAY__show_8bits( tnd, N( x ), N( y ), N( c ), N( 0xffffffff ) );
+  x += 20;
+  return;
+}
+case 2: 
+{
+  uint64_t c = get_partner_register( 2 );
+  set_partner_register( 0, c ); // mov r0, r2
+  TRIVIAL_NUMERIC_DISPLAY__show_8bits( tnd, N( x ), N( y ), N( c ), N( 0xffffffff ) );
+  x += 20;
+  return;
+}
+case 3: 
+{
+  set_partner_register( 2, 1 ); // mov r2, #1
+  asm ( "svc 0" );
+  return;
+}
+case 4 ... 6: 
+{
+  switch (syndrome & 0xffff) {
+  case 4: set_partner_register( 14, get_partner_register( 4 ) ); break; // mov     lr, r4
+  case 5: set_partner_register( 1, 0x8000 ); break;
+  case 6: set_partner_register( 7, get_partner_register( 12 ) ); break;
+  }
+
+if ((syndrome & 0xffff) != 6) {
+  NUMBER address = { .r = 0x02022000 };
+  PHYSICAL_MEMORY_BLOCK page = PHYSICAL_MEMORY_BLOCK__subblock( riscos_memory, address, size );
+  TRIVIAL_NUMERIC_DISPLAY__set_page_to_show( tnd, page, address );
+
+  TRIVIAL_NUMERIC_DISPLAY__show_page( tnd );
+
+  sleep_ms( 1000 );
+}
+  return;
+}
+case 7: 
+{
+  asm ( "brk 1" );
+  return;
+}
+default:asm ( "brk 3" );
+}
+}
+
 static void smc32( uint32_t syndrome ) { asm ( "brk 1" ); }
 
 static void respond_to_tag_request( uint32_t *request )
@@ -676,7 +797,14 @@ static struct {
   uint32_t control_status;
   uint64_t counter;
   uint32_t compare[4];
-} system_timer = { 0 };
+} volatile system_timer = { 0 };
+
+static bool timer_passed( uint32_t now, uint32_t ticks, uint32_t match )
+{
+  bool wraps = (now + ticks) < now;
+  if (wraps) return (match > now) || (match < (now + ticks));
+  return (match > now) && (match < (now + ticks));
+}
 
 static void timer_thread()
 {
@@ -694,39 +822,25 @@ static void timer_thread()
     }
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 40 ), N( system_timer.control_status ), N( colour ) );
 TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1500 ), N( 50 ), N( system_timer.counter ), N( colour ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 60 ), N( system_timer.compare[0] ), N( colour ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 70 ), N( system_timer.compare[1] ), N( colour ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 80 ), N( system_timer.compare[2] ), N( colour ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 90 ), N( system_timer.compare[3] ), N( colour ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 60 ), N( system_timer.compare[0] ), N( system_timer.control_status & 1 ? 0xffff0000 : 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 70 ), N( system_timer.compare[1] ), N( system_timer.control_status & 2 ? 0xffff0000 : 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 80 ), N( system_timer.compare[2] ), N( system_timer.control_status & 4 ? 0xffff0000 : 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 90 ), N( system_timer.compare[3] ), N( system_timer.control_status & 8 ? 0xffff0000 : 0xff00ff00 ) );
 static stop_count = 0;
-if (++stop_count == 100) asm ( "brk 3" );
+//if (++stop_count == 100) asm ( "brk 3" );
     }
 
-    // Dumb, but accurate FIXME
-    int irq = 0;
-    for (int i = 0; i < 1000/16; i++) {
-      system_timer.counter += 16;
-
-      if ((system_timer.counter & 0xffffffff) == (0xfffffff0 & system_timer.compare[0])) {
-        system_timer.control_status |= (1 << 0); irq = true;
-      }
-      if ((system_timer.counter & 0xffffffff) == (0xfffffff0 & system_timer.compare[1])) {
-        system_timer.control_status |= (1 << 1); irq = true;
-      }
-      if ((system_timer.counter & 0xffffffff) == (0xfffffff0 & system_timer.compare[2])) {
-        system_timer.control_status |= (1 << 2); irq = true;
-      }
-      if ((system_timer.counter & 0xffffffff) == (0xfffffff0 & system_timer.compare[3])) {
-        system_timer.control_status |= (1 << 3); irq = true;
+    // This is an inaccurate clock, it's probably worth giving RO a proper timer, triggered by interrupt.
+    const uint32_t ticks = 1000;
+    uint32_t now = system_timer.counter;
+    system_timer.counter += ticks;
+    for (int i = 0; i < 4; i++) {
+      if (timer_passed( now, ticks, system_timer.compare[i] )) {
+        system_timer.control_status |= (1 << i);
+        trigger_irq( i ); // Only irq 1 is used by RISC OS, the others are an educated guess.
       }
     }
 
-if (0 &&irq) {
-  TRIVIAL_NUMERIC_DISPLAY__show_page( tnd );
-  for (;;) { asm ( "svc 0 " ); }
-}
-
-    if (irq) trigger_irq( 72 );
     sleep_ms( 1 );
   }
 }
@@ -762,6 +876,10 @@ static void bcm_2835_system_timer_access( bool is_write, int register_index, uin
     int n = (offset >> 4) & 3;
     if (is_write) {
       system_timer.compare[n] = get_partner_register( register_index );
+if (system_timer.compare[n] < system_timer.counter & 0xffffffff) {
+// FIXME!
+system_timer.compare[n] = system_timer.counter + 2500;
+}
     }
     else {
       set_partner_register( register_index, system_timer.compare[n] );
@@ -772,12 +890,12 @@ static void bcm_2835_system_timer_access( bool is_write, int register_index, uin
   default: asm ( "brk 1" );
   }
 
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 40 ), N( system_timer.control_status ), N( 0xff00ff00 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1500 ), N( 50 ), N( system_timer.counter ), N( 0xff00ff00 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 60 ), N( system_timer.compare[0] ), N( 0xff00ff00 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 70 ), N( system_timer.compare[1] ), N( 0xff00ff00 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 80 ), N( system_timer.compare[2] ), N( 0xff00ff00 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 90 ), N( system_timer.compare[3] ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1350 ), N( 40 ), N( system_timer.control_status ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1350 ), N( 50 ), N( system_timer.counter ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1350 ), N( 60 ), N( system_timer.compare[0] ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1350 ), N( 70 ), N( system_timer.compare[1] ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1350 ), N( 80 ), N( system_timer.compare[2] ), N( 0xff00ff00 ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1350 ), N( 90 ), N( system_timer.compare[3] ), N( 0xff00ff00 ) );
 }
 
 extern struct __attribute__(( packed )) {
@@ -816,7 +934,7 @@ if (y >= 1000) y -= 398;
     uint32_t Clock_Divider;
     uint32_t Data_Delay;
     uint32_t Clock_Stretch_Timeout;
-  } BSC[3] = { // BCM2835-ARM-Peripherals.pdf Section 3 (IIC/I2C).
+  } volatile BSC[3] = { // BCM2835-ARM-Peripherals.pdf Section 3 (IIC/I2C).
     { .Status = 0x50, .Clock_Divider = 0x5dc, .Data_Delay = 0x00300030, .Clock_Stretch_Timeout = 0x40 },
     { .Status = 0x50, .Clock_Divider = 0x5dc, .Data_Delay = 0x00300030, .Clock_Stretch_Timeout = 0x40 },
     { .Status = 0x50, .Clock_Divider = 0x5dc, .Data_Delay = 0x00300030, .Clock_Stretch_Timeout = 0x40 }
@@ -960,7 +1078,7 @@ static struct {
   uint32_t TUNE_STEPS_DDR; // 0x90 Card clock tuning steps for DDR
   uint32_t SPI_INT_SPT; // 0xf0 SPI Interrupt Support
   uint32_t SLOTISR_VER; // 0xfc Slot Interrupt Status and Version
-} emmc_state = { .CONTROL1 = 7 };
+} volatile emmc_state = { .CONTROL1 = 7 };
 
 // Use for all values that can be affected by more than one thread
 static uint64_t emmc_state_lock = 0;
@@ -1337,6 +1455,22 @@ uint64_t vm_handler( uint64_t pc, uint64_t syndrome, uint64_t fault_address, uin
   static int count = 0;
   uint64_t new_pc = pc; // Retry instruction by default
 
+static uint32_t recent[5] = { 0 };
+show = true;
+for (int i = 0; show && i < 5; i++) {
+  if (recent[i] == fault_address) {
+    show = false;
+  }
+}
+if (show) {
+  recent[0] = recent[1];
+  recent[1] = recent[2];
+  recent[2] = recent[3];
+  recent[3] = recent[4];
+  recent[4] = fault_address;
+}
+
+if (show) {
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 200 ), N( syndrome ), N( 0xffff8080 ) );
   TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1400 ), N( 210 ), N( fault_address ), N( 0xffff8080 ) );
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 220 ), N( intermediate_physical_address ), N( 0xffff8080 ) );
@@ -1347,7 +1481,8 @@ uint64_t vm_handler( uint64_t pc, uint64_t syndrome, uint64_t fault_address, uin
     TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 260+11*i ), N( get_partner_register( i ) ), N( 0xffff8080 ) );
   }
 
-asm ( "svc 0" );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( x-70 ), N( y+40 ), N( pc ), N( elc ) );
+}
 
   switch (syndrome >> 26) {
   case 0b000000: asm ( "brk 0b000000" ); break; // Never happens or is unimplemented
@@ -1416,6 +1551,8 @@ asm ( "svc 0" );
   case 0b111111: asm ( "brk 0b111111" ); break; // Never happens or is unimplemented
   }
 
+if (show) asm ( "svc 0" );
+
   return new_pc;
 }
 
@@ -1436,27 +1573,14 @@ void entry()
 
   tnd = TRIVIAL_NUMERIC_DISPLAY__get_service( "Trivial Numeric Display", -1 );
 
-  PHYSICAL_MEMORY_BLOCK riscos_memory;
   riscos_memory = SYSTEM__allocate_memory( system, riscos_ram_size );
   if (riscos_memory.r == 0) {
     asm ( "brk 2" );
   }
 
-
-{
-NUMBER page = { .r = 0x02004000 };
-NUMBER size = { .r = 4096 };
-TRIVIAL_NUMERIC_DISPLAY__set_page_to_show( tnd, PHYSICAL_MEMORY_BLOCK__subblock( riscos_memory, page, size ), page );
-}
-
   load_guest_os( riscos_memory );
 
   DRIVER_SYSTEM__map_at( driver_system(), riscos_memory, ro_address );
-
-uint32_t *arm_code = (void *) ro_address.r;
-for (int i = 0x500000 / 4; i < 0x4000000/4; i++) {
-  arm_code[i] = i;
-}
 
   if (image_is_valid()) {
     // Establish a translation table mapping the VM "physical" addresses to real memory
@@ -1491,8 +1615,12 @@ for (int i = 0x500000 / 4; i < 0x4000000/4; i++) {
 
     // This seems to override the bits in HCR_EL2:
     uint32_t cp15_traps = 0xffff;
-    // cp15_traps &= ~(1 << 7); // Don't trap cache maintenance instructions.  STOPS WORKING!
+    //cp15_traps &= ~(1 << 7); // Don't trap cache maintenance instructions.  STOPS WORKING!
+    // This stops with an undefined instruction error, internal to the NS EL1.
+    // So, how about I trap undefined instructions?
     cp15_traps &= ~(1 << 8); // Don't trap TLB maintenance instructions.
+    cp15_traps &= ~(1 << 5); // Don't trap fault status registers
+    cp15_traps &= ~(1 << 6); // Don't trap fault address registers
     set_vm_system_register( HSTR_EL2, cp15_traps );
 
     // Devices requiring asynchronous behaviour:
@@ -1503,15 +1631,40 @@ for (int i = 0x500000 / 4; i < 0x4000000/4; i++) {
     while (sdcard_thread == 0) { yield(); }
 
     uint64_t next_pc = 0;
-int events = 0;
+
+#ifdef TRACING
+
+  set_block( 0x4, 7 ); // An undefined instruction has occurred, LR_und is in X22
+
+  set_block( 0x44dc4, 1 ); // print it, and copy r2 to r0, continue
+  set_block( 0x44dcc, 2 ); // print it, and set r10 to #20
+  set_block( 0x1a6b0, 3 ); // mov r2, #1
+
+  set_block( 0x916c, 0xffe ); // ReleaseExitZero - Should never happen, afaics! r2 should = 0
+  //set_block( 0x967c, 0 ); // Reached, shows translation tables (see hvc32), which "fixes" some cache/tlb problem
+  //set_block( 0x1a6b0, 0x1000 + __COUNTER__ );
+  // set_block( 0x27d98, 0x1000 + __COUNTER__ ); // Kernel/s/NewReset 363 reached
+  // set_block( 0x27dd0, 0x1000 + __COUNTER__ ); // Kernel/s/NewReset 375 reached
+  // set_block( 0x27df8, 0x1000 + __COUNTER__ ); // After InitialiseMode reached
+  // set_block( 0xc918, 0x1000 + __COUNTER__ ); // HAL_KbdScanDependencies, reached
+  // set_block( 0x27e34, 0x1000 + __COUNTER__ ); // Before ModuleInitForKbdScan, reached.
+  set_block( 0x1f7e38, 0x1000 + __COUNTER__ ); // RTSupport module start code, reached, eventually (takes too long!)
+
+  set_block( 0x46c64, 5 ); // Lazy fixup failed // 46c64:       e3a01902        mov     r1, #32768      ; 0x8000
+  set_block( 0x46c98, 4 ); // Lazy fixup failed // 46c98:       e1a0e004        mov     lr, r4
+  set_block( 0x46b40, 6 ); // Lazy fixup 46b40:       e1a0700c        mov     r7, ip 
+
+  set_block( 0x1a6cc, 0xfff ); // Lazy fixup failed, as detected by caller; are the flags getting corrupted?
+
+  set_block( 0x27e3c, 0x1000 + __COUNTER__ ); // Before KeyPostInit (not reached)
+  set_block( 0x44bb4, 0x1000 + __COUNTER__ ); // NewRemV
+  set_block( 0x29ce8, 0x1000 + __COUNTER__ ); // OS_CLI in CLILOP, not reached
+  set_block( 0x29ca0, 0x1000 + __COUNTER__ ); // CLILOP, reached
+  set_block( 0x2842c, 0x1000 + __COUNTER__ ); // DoStartSuper
+#endif
 
     for (;;) {
-asm ( "svc 0" );
       next_pc = switch_to_partner( vm_handler, next_pc );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( x-70 ), N( y ), N( next_pc ), N( elc ) );
-// if (next_pc == 0xfc02b414) { for (;;) { asm ( "svc 0" ); } }  ReadCPUFeatures
-if (0 && ++events > 0x3a0)
-sleep_ms( 5000 );
     }
   }
 }

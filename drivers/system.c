@@ -299,7 +299,40 @@ void MapValue__DRIVER_SYSTEM__map_at( MapValue o, PHYSICAL_MEMORY_BLOCK block, N
   make_special_request( Isambard_System_Service_WriteHeap, o.heap_offset_lsr4 << 4, o.number_of_vmbs * sizeof( VirtualMemoryBlock ), vmbs );
   release_lock( &vmb_lock );
 
-  MapValue__return();
+  MapValue__DRIVER_SYSTEM__map_at__return();
+}
+
+void MapValue__DRIVER_SYSTEM__unmap( MapValue o, NUMBER start )
+{
+  PHYSICAL_MEMORY_BLOCK mapped_block = { .r = 0 };
+
+  claim_lock( &vmb_lock );
+        // FIXME Expand number of blocks
+        // FIXME Allow for addresses not in order
+        // FIXME Invalid parameters
+        // FIXME Check page counts match?
+        // FIXME Check page is owned by the caller?
+
+  make_special_request( Isambard_System_Service_ReadHeap, o.heap_offset_lsr4 << 4, o.number_of_vmbs * sizeof( VirtualMemoryBlock ), vmbs );
+
+  for (int i = 0; i < o.number_of_vmbs; i++) {
+    if (vmbs[i].page_count != 0
+     && vmbs[i].start_page == (start.r >> 12)) {
+      mapped_block.r = vmbs[i].memory_block;
+      for (int j = i; j < o.number_of_vmbs-1 && vmbs[j].r != 0; j++) {
+        vmbs[j].r = vmbs[j+1].r;
+      }
+      vmbs[i+1].r = 0;
+      break;
+    }
+  }
+
+  make_special_request( Isambard_System_Service_WriteHeap, o.heap_offset_lsr4 << 4, o.number_of_vmbs * sizeof( VirtualMemoryBlock ), vmbs );
+  release_lock( &vmb_lock );
+
+  if (mapped_block.r == 0) MapValue__exception( 0xbadc0de3 ); // FIXME
+
+  MapValue__DRIVER_SYSTEM__unmap__return( mapped_block );
 }
 
 void MapValue__SYSTEM__create_thread( MapValue o, NUMBER code, NUMBER stack_top )

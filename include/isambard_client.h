@@ -274,5 +274,6 @@ extern uint64_t switch_to_partner( vm handler, uint64_t pc );
 extern uint64_t get_partner_register( int code );
 extern void set_partner_register( int code, uint64_t value );
 
-typedef enum { CNTKCTL_EL1, CSSELR_EL1, MAIR_EL1, SCTLR_EL1, TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1, ACTLR_EL1, FPEXC32_EL2, VTTBR_EL2, HCR_EL2, HSTR_EL2, VMPIDR_EL2, VPIDR_EL2, VTCR_EL2, DACR32_EL2, CONTEXTIDR_EL1 } vm_system_register;
+typedef enum { CNTKCTL_EL1, CSSELR_EL1, MAIR_EL1, SCTLR_EL1, TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1, ACTLR_EL1, FPEXC32_EL2, ESR_EL1, FAR_EL1, VTTBR_EL2, HCR_EL2, HSTR_EL2, VMPIDR_EL2, VPIDR_EL2, VTCR_EL2, DACR32_EL2, CONTEXTIDR_EL1 } vm_system_register;
 extern void set_vm_system_register( vm_system_register reg, uint32_t v );
+extern uint32_t get_vm_system_register( vm_system_register reg );

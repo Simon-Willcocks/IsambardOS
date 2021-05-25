@@ -487,6 +487,11 @@ static void clear_core_translation_tables( Core *core )
   }
 }
 
+uint64_t asid_of( interface_index map )
+{
+  return map; // FIXME Will run out of valid values really quickly!
+}
+
 void load_this_map( Core *core, interface_index new_map )
 {
   if (core->loaded_map != new_map) {
@@ -503,7 +508,7 @@ void load_this_map( Core *core, interface_index new_map )
 
     core->loaded_map = new_map;
   
-    set_asid( core, new_map ); // FIXME Will run out of values really soon!
+    set_asid( core, asid_of( new_map ) );
   }
 }
 
@@ -1035,6 +1040,8 @@ static thread_switch system_driver_request( Core *core, thread_context *thread )
     break;
   case Isambard_System_Service_WriteHeap:
     write_heap( thread->regs[1], thread->regs[2], (void*) thread->regs[3] );
+    // Assumption: This will affect the caller's memory map
+    asm ( "tlbi ASIDE1, %[asid]" : : [asid] "r" (asid_of( thread->stack_pointer[0].caller_map ) << 48) );
     break;
   case Isambard_System_Service_AllocateHeap:
     thread->regs[0] = (uint64_t) allocate_heap( thread->regs[1] );

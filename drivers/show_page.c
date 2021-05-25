@@ -20,7 +20,7 @@ enum fb_colours {
   Yellow= 0xffffff00,
   White = 0xffffffff };
 
-static const unsigned char bitmaps[16][8] = {
+static const unsigned char __attribute__(( aligned( 16 ) )) bitmaps[16][8] = {
   {
   0b00111100,
   0b01100110,
@@ -179,13 +179,16 @@ static inline void show_nibble( uint32_t x, uint32_t y, uint32_t nibble, uint32_
   uint32_t dx = 0;
   uint32_t dy = 0;
 
-  for (dy = 0; dy < 8; dy++) {
-    for (dx = 0; dx < 8; dx++) {
-      if (0 != (bitmaps[nibble][dy] & (0x80 >> dx)))
-        set_pixel( x+dx, y+dy, colour );
-      else
-        set_pixel( x+dx, y+dy, Black );
-    }
+  uint64_t bitmap = ((uint64_t*) &bitmaps[0][0])[nibble & 0xf]; // 8x8bits = 64 bits
+
+  uint32_t *p = ((uint32_t * const) mapped_address);
+  p += (x+7) + y * vwidth; // Bottom right pixel
+  uint32_t line_offset = vwidth + 8;
+  uint64_t bit = 1;
+  while (bit != 0) {
+    *p-- = (bit & bitmap) ? colour : Black;
+    bit = bit << 1; // => 0 when all pixels displayed
+    if (bit & 0x0101010101010101) p += line_offset;
   }
 }
 
@@ -275,6 +278,11 @@ extern uint32_t devices;
 void TND__TRIVIAL_NUMERIC_DISPLAY__set_page_to_show( TND o, PHYSICAL_MEMORY_BLOCK page, NUMBER start )
 {
   o = o;
+
+  if (page_to_display.r != 0) {
+    PHYSICAL_MEMORY_BLOCK old_block = DRIVER_SYSTEM__unmap( driver_system(), NUMBER__from_integer_register( (uint64_t) &devices ) );
+    if (old_block.r != page_to_display.r) { }
+  }
 
   DRIVER_SYSTEM__map_at( driver_system(), page, NUMBER__from_integer_register( (uint64_t) &devices ) );
   page_to_display = page;
