@@ -59,25 +59,118 @@ static const uint32_t vwidth = 1920;
 
 #include "raw/trivial_display.h"
 
-uint64_t c_bsod_regs[34] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 };
-
 extern void invalidate_all_caches();
+
+#ifdef QEMU
+static uint32_t *const screen_address = (void*) 0x3c200000;
+#else
+static uint32_t *const screen_address = (void*) 0x0e400000;
+#endif
+
+void map_screen()
+{
+  extern Aarch64_VMSA_entry kernel_tt_l2[16];
+  for (int i = 8; i < 12; i++) {
+    Aarch64_VMSA_entry entry = Aarch64_VMSA_block_at( ((i - 8) << 21) + (uint64_t) screen_address );
+    entry = Aarch64_VMSA_el0_rw_( entry );
+    entry.access_flag = 1; // Don't want to be notified when accessed
+    entry.shareability = 3; // Inner shareable
+    entry = Aarch64_VMSA_global( entry );
+    entry = Aarch64_VMSA_write_back_memory( entry );
+    kernel_tt_l2[i] = entry;
+  }
+  asm( "dmb sy" );
+}
+
+void map_2MB( uint32_t physical, uint32_t virtual )
+{
+  extern Aarch64_VMSA_entry kernel_tt_l2[16];
+  Aarch64_VMSA_entry entry = Aarch64_VMSA_block_at( ((physical >> 21)<<21) );
+  entry = Aarch64_VMSA_el0_rw_( entry );
+  entry.access_flag = 1; // Don't want to be notified when accessed
+  entry.shareability = 3; // Inner shareable
+  entry = Aarch64_VMSA_global( entry );
+  entry = Aarch64_VMSA_write_back_memory( entry );
+  kernel_tt_l2[virtual >> 21] = entry;
+  asm( "dmb sy" );
+}
+
+uint64_t c_bsod_regs[34] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 };
 
 static void show_thread( thread_context *thread, uint32_t x, uint32_t colour )
 {
   thread = (void *) (((uint64_t) thread) & lomem_bits);
 
-  show_qword( x, 430, (uint64_t) thread, colour );
+  show_qword( x, 600, (uint64_t) thread, colour );
   invalidate_all_caches();
-  for (int i = 0; i < 31; i++) { show_qword( x, 450+10*i, thread->regs[i], colour ); }
+  for (int i = 0; i < 31; i++) { show_qword( x, 615+10*i, thread->regs[i], colour ); }
 
-  show_qword( x, 800, thread->prev, colour );
-  show_qword( x, 810, thread->next, colour );
-  show_qword( x, 820, thread->partner, colour );
+  show_qword( x, 940, thread->prev, colour );
+  show_qword( x, 950, thread->next, colour );
+  show_qword( x, 960, thread->partner, colour );
 
-  show_qword( x, 840, thread->pc, colour );
-  show_word( x, 850, thread->spsr, colour );
-  show_word( x, 860, thread->gate, colour );
+  show_qword( x, 970, thread->pc, colour );
+  show_word( x, 980, thread->spsr, colour );
+  show_word( x, 990, thread->gate, colour );
+}
+
+void show_vm_regs()
+{
+  int y = 650;
+#define show( reg ) { show_qword( 1000, y, vm[1].reg, White ); y += 10; }
+  show( cntkctl_el1 );
+  show( csselr_el1 );
+
+  show( mair_el1 );
+  show( sctlr_el1 );
+
+  show( tcr_el1 );
+  show( ttbr0_el1 ); // Core-specific, in secure mode
+
+  show( ttbr1_el1 );
+  show( vbar_el1 );
+
+  show( actlr_el1 );
+  show( fpexc32_el2 ); // Placeholder
+
+y+=4;
+  show( esr_el1 );
+  show( far_el1 );
+
+y+=4;
+  show( vttbr_el2 );
+  show( hcr_el2 );
+  show( hstr_el2 );
+  show( vmpidr_el2 );
+  show( vpidr_el2 );
+  show( vtcr_el2 );
+  show( dacr32_el2 );
+  show( contextidr_el1 );
+#undef show
+}
+
+void c_show_page( uint64_t page )
+{
+  map_screen();
+  uint32_t base = 12 << 21;
+  map_2MB( page, base );
+
+  show_vm_regs();
+
+  thread_context *runnable;
+  runnable = (void *) (((uint64_t) runnable) & lomem_bits);
+  show_thread( runnable, 400, White );
+  while (runnable->partner == 0) {
+    runnable = (void *) (((uint64_t) runnable->next) & lomem_bits);
+  }
+  invalidate_all_caches();
+  show_thread( runnable, 560, Green );
+  invalidate_all_caches();
+  show_thread( runnable->partner, 720, Yellow );
+
+  show_word( 720, 30, page, Yellow );
+  show_page( base + (page & (1 << 21)-1) );
+  for (int count=0;;count++) { show_word( 500, 1000, count, Green ); invalidate_all_caches(); }
 }
 
 void c_bsod()
@@ -106,68 +199,30 @@ void c_bsod()
   );
   invalidate_all_caches();
 
-#ifdef QEMU
-static uint32_t *const screen_address = (void*) 0x3c200000;
-#else
-static uint32_t *const screen_address = (void*) 0x0e400000;
-#endif
+  map_screen();
 
-extern Aarch64_VMSA_entry kernel_tt_l2[16];
-  for (int i = 8; i < 12; i++) {
-    Aarch64_VMSA_entry entry = Aarch64_VMSA_block_at( ((i - 8) << 21) + (uint64_t) screen_address );
-    entry = Aarch64_VMSA_el0_rw_( entry );
-    entry.access_flag = 1; // Don't want to be notified when accessed
-    entry.shareability = 3; // Inner shareable
-    entry = Aarch64_VMSA_global( entry );
-    entry = Aarch64_VMSA_write_back_memory( entry );
-    kernel_tt_l2[i] = entry;
-  }
-  asm ( "dsb sy" );
+  for (int i = 0; i < 34; i++) { show_qword( 200, 650+10*i, c_bsod_regs[i], Green ); }
 
-  for (int i = 0; i < 34; i++) { show_qword( 200, 450+10*i, c_bsod_regs[i], White ); }
+  invalidate_all_caches();
+
   thread_context *runnable;
   asm ( "mov %[t], sp\norr %[t], %[t], #0xff0\nldr %[t], [%[t],#8]"
         : [t] "=&r" (runnable) );
 
   runnable = (void *) (((uint64_t) runnable) & lomem_bits);
+  show_thread( runnable, 400, White );
+  while (runnable->partner == 0) {
+    runnable = (void *) (((uint64_t) runnable->next) & lomem_bits);
+  }
   invalidate_all_caches();
-  show_thread( runnable, 440, Green );
+  show_thread( runnable, 560, Green );
   invalidate_all_caches();
-  show_thread( runnable->partner, 600, Yellow );
+  show_thread( runnable->partner, 720, Yellow );
+
+  show_vm_regs();
 
   {
-  int y = 450;
-#define show( reg ) { show_qword( 1000, y, vm[1].reg, White ); y += 10; }
-  show( cntkctl_el1 );
-  show( csselr_el1 );
-
-  show( mair_el1 );
-  show( sctlr_el1 );
-
-  show( tcr_el1 );
-  show( ttbr0_el1 ); // Core-specific, in secure mode
-
-  show( ttbr1_el1 );
-  show( vbar_el1 );
-
-  show( actlr_el1 );
-  show( fpexc32_el2 ); // Placeholder
-
-  show( esr_el1 );
-  show( far_el1 );
-
-  show( vttbr_el2 );
-  show( hcr_el2 );
-  show( hstr_el2 );
-  show( vmpidr_el2 );
-  show( vpidr_el2 );
-  show( vtcr_el2 );
-  show( dacr32_el2 );
-  show( contextidr_el1 );
-#undef show
-}
-  {
-  int y = 450;
+  int y = 650;
 #define show( reg ) { uint64_t r; asm ( "mrs %[r], "#reg : [r] "=r" (r) ); show_qword( 10, y, r, White ); y += 10; }
 //show( cntkctl_el1 );
 //show( csselr_el1 );
@@ -229,16 +284,9 @@ show( scr_el3 );
 // ESR_EL2, FAR_EL2, HPFAR_EL2, IFSR32_EL2; passed to partner thread to inform of exceptions
 // sctlr_el2, tcr_el2, mair_el2, vbar_el2; Relates to Isambard VM implementation, doesn't change
 
-  {
-    Aarch64_VMSA_entry entry = Aarch64_VMSA_block_at( 0x6000000 );
-    entry = Aarch64_VMSA_el0_rw_( entry );
-    entry.access_flag = 1; // Don't want to be notified when accessed
-    entry.shareability = 3; // Inner shareable
-    entry = Aarch64_VMSA_global( entry );
-    entry = Aarch64_VMSA_write_back_memory( entry );
-    kernel_tt_l2[6] = entry;
-  }
-for (;;) {}
+  map_2MB( 0x6000000, 6 << 21 );
+
+  for (int count=0;;count++) { show_word( 500, 1000, count, Blue ); invalidate_all_caches(); }
 for (int i = 0; i < 4; i++)
 {
   show_page( ((i+8) << 12) + (6 << 21) );
@@ -406,7 +454,11 @@ for (int i = 0; i < 4; i++)
     "\n  mrs x2, esr_el3" \
     "\n  mov x3, #0x5e000000" \
     "\n  cmp x3, x2" \
-    "\n  b.ne bsod" \
+    "\n  b.eq 1f" \
+    "\n  tbz w2, #8, bsod" \
+    "\n  mov x0, x4" \
+    "\n  bl c_show_page" \
+    "\n1:" \
     "\n  // Toggle security state, IRQ, FIQ routing" \
     "\n  mrs x3, scr_el3" \
     "\n  eor x3, x3, #0x007 // FIQ. IRQ, NS" \
@@ -463,8 +515,7 @@ for (int i = 0; i < 4; i++)
     "\nbsod: // We've had it, run some C code which never returns" \
     "\n  msr DAIFSet, #0x3" \
     "\n  mov x1, sp" \
-    "\n  orr x1, x1, #0xff0" \
-    "\n  mov sp, x1" \
+    "\n  orr sp, x1, #0xff0" \
     "\n  b c_bsod" );
 
 #define AARCH64_VECTOR_TABLE_SPX_IRQ_CODE asm ( "bl bsod" );
