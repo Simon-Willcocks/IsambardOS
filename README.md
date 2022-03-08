@@ -48,7 +48,7 @@ The kernel provides system calls to allow code in a Map to:
 * Maintain Locks: Wait or Release, only needed when EL0 detects a lock is held by another thread
 * Yield the processor to another thread
 
-It does /not/:
+It does _not_:
 
 * Manage hardware (other than the processor and MMU)
 * Manage threads (they are created by the System Map)
