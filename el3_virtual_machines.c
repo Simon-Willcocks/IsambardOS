@@ -477,26 +477,15 @@ for (int i = 0; i < 4; i++)
     "\n  ldp x2, x3, [x0, #%[pc]] // Includes never-used gate value" \
     "\n  msr elr_el3, x2" \
     "\n  msr spsr_el3, x3" \
-    "\n" \
-    load_pair( x0, 2, 3 ) \
-    load_pair( x0, 4, 5 ) \
-    load_pair( x0, 6, 7 ) \
-    load_pair( x0, 8, 9 ) \
-    load_pair( x0, 10, 11 ) \
-    load_pair( x0, 12, 13 ) \
-    load_pair( x0, 14, 15 ) \
-    load_pair( x0, 16, 17 ) \
-    load_pair( x0, 18, 19 ) \
-    load_pair( x0, 20, 21 ) \
-    load_pair( x0, 22, 23 ) \
-    load_pair( x0, 24, 25 ) \
-    load_pair( x0, 26, 27 ) \
-    load_pair( x0, 28, 29 ) \
-    "\n  ldr x30, [x0, #%[regs] + 30 * 8]" \
-    load_pair( x0, 0, 1 ) \
+"\n  tbz x3, #21, 1f" \
+"\n  // Set Single Step" \
+"\n  mrs x3, mdscr_el1" \
+"\n  orr x3, x3, #1" \
+"\n  msr mdscr_el1, x3" \
+"\n1:" \
+    "\n b resume_ns_thread" \
     "\n  eret" \
     : : \
-        [regs] "i" (&((thread_context*)0)->regs), \
         [pc] "i" (&((thread_context*)0)->pc), \
         [lomem_bits] "i" (lomem_bits) \
     ); \
@@ -518,7 +507,29 @@ for (int i = 0; i < 4; i++)
     "\n  orr sp, x1, #0xff0" \
     "\n  b c_bsod" );
 
-#define AARCH64_VECTOR_TABLE_SPX_IRQ_CODE asm ( "bl bsod" );
+#define AARCH64_VECTOR_TABLE_SPX_IRQ_CODE asm ( "bl bsod" ); \
+    asm ( \
+    "\nresume_ns_thread:" \
+    load_pair( x0, 2, 3 ) \
+    load_pair( x0, 4, 5 ) \
+    load_pair( x0, 6, 7 ) \
+    load_pair( x0, 8, 9 ) \
+    load_pair( x0, 10, 11 ) \
+    load_pair( x0, 12, 13 ) \
+    load_pair( x0, 14, 15 ) \
+    load_pair( x0, 16, 17 ) \
+    load_pair( x0, 18, 19 ) \
+    load_pair( x0, 20, 21 ) \
+    load_pair( x0, 22, 23 ) \
+    load_pair( x0, 24, 25 ) \
+    load_pair( x0, 26, 27 ) \
+    load_pair( x0, 28, 29 ) \
+    "\n  ldr x30, [x0, #%[regs] + 30 * 8]" \
+    load_pair( x0, 0, 1 ) \
+    "\n  eret" \
+    : : [regs] "i" (&((thread_context*)0)->regs) \
+    );
+
 #define AARCH64_VECTOR_TABLE_SPX_FIQ_CODE asm ( "bl bsod" );
 #define AARCH64_VECTOR_TABLE_SPX_SERROR_CODE asm ( "bl bsod" \
     "\nswitch_to_secure:" \
@@ -714,7 +725,22 @@ void roll_call( core_types *present, unsigned number )
   asm volatile ( "  msr VBAR_EL3, %[table]\n" : : [table] "r" (VBAR_EL23) );
   asm volatile ( "  msr VBAR_EL2, %[table]\n" : : [table] "r" (VBAR_EL23) );
 
-  asm volatile ( "  msr VPIDR_EL2, %[bits]\n" : : [bits] "r" (0x410fb767) ); // ARM1176JZ-S
+  asm volatile ( "  msr VPIDR_EL2, %[bits]\n" : : [bits] "r" (0x410FD034) );
+
+
+  // SDD no debug events in secure mode, this means that there's no need to context switch debug
+  // registers between Secure and Non-Secure mode.
+  asm volatile ( "  msr MDCR_EL3, %[bits]\n" : : [bits] "r" (1 << 16) );
+  // ARM DDI 0487G.a, page 2555: to get debug events sent to EL2, the following flags must be set to:
+  // Lock FALSE, SCR_EL3.NS 1, MDCR_EL3.SDD x, SCR_EL3.EEL2 x,
+  // HCR_EL2.TGE 0, MDCR_EL2.TDE 1,
+  // MDSCR_EL1.KDE 0, PSTATE.D x.
+
+  register uint64_t bits;
+  // TGE is known to be 0, non-Secure mode requires a guest OS
+  asm volatile ( "  mrs %[bits], MDCR_EL2\n" : [bits] "=r" (bits) );
+  bits |= (1 << 8);
+  asm volatile ( "  msr MDCR_EL2, %[bits]\n" : : [bits] "r" (bits) );
 
   led_init( 0x3f200000 );
 

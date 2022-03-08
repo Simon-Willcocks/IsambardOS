@@ -445,6 +445,7 @@ static inline thread_switch handle_svc( Core *core, thread_context *thread, int 
   vm[1].hcr_el2 &= ~(1 << 7);
 }
     return result;
+  case 10: { asm( "mov x4, %[addr]\nsmc 800" : : [addr] "r" (thread->regs[0]) ); } ; break;
   case ISAMBARD_GATE: // gate (wait_until_woken or wake_thread)
     return handle_svc_gate( core, thread );
   case ISAMBARD_DUPLICATE_TO_RETURN:
@@ -589,8 +590,9 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
       if (0 != (spsr & 0x10) || ((spsr & 0x1e) == 8)) {
         asm ( "dc ivac, %[r]" : : [r] "r" (&result.now->pc) );
         result.now->pc = thread->regs[1];
+        result.now->spsr |= (1 << 21); // Single-step
         asm ( "dc civac, %[r]" : : [r] "r" (&result.now->pc) );
-        // Moving to Non-Secure
+        // Moving to Non-Secure, these registers will be filled in on return to secure mode
         thread->regs[0] = 0x7777777777777777ull; // Will be pc
         thread->regs[1] = 0x7777777777777777ull; // Will be syndrome
         thread->regs[2] = 0x7777777777777777ull; // Will be fault address
@@ -599,7 +601,8 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
       }
       else {
         // EL2 will have updated the first three registers
-        asm ( "dc ivac, %[r]" : : [r] "r" (core->runnable->regs) );
+        asm ( "dc ivac, %[r]" : : [r] "r" (&core->runnable->regs[0]) );
+        asm ( "dc ivac, %[r]" : : [r] "r" (&core->runnable->regs[2]) );
       }
     }
     return result;

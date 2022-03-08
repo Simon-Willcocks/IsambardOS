@@ -555,12 +555,13 @@ static void start_ms_timer()
 
 #ifdef QEMU
 ticks_per_millisecond = frequency / 500;
-#endif
-
+// Turned off interrupts for the time being, while testing single-stepping...
+#else
   asm ( "mrs %[d], CNTPCT_EL0" : [d] "=r" (now) );
   this_core.last_cval = now + ticks_per_millisecond; // Match in a millisecond
   asm ( "msr CNTP_CVAL_EL0, %[d]" : : [d] "r" (this_core.last_cval) );
   asm ( "msr CNTP_CTL_EL0, %[w]" : : [w] "r" (5) ); // Enable interrupts
+#endif
 }
 
 void __attribute__(( noreturn )) idle_thread_entry( Object system_interface,

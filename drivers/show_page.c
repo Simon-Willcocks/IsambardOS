@@ -176,9 +176,6 @@ static inline void set_pixel( uint32_t x, uint32_t y, uint32_t colour )
 
 static inline void show_nibble( uint32_t x, uint32_t y, uint32_t nibble, uint32_t colour )
 {
-  uint32_t dx = 0;
-  uint32_t dy = 0;
-
   uint64_t bitmap = ((uint64_t*) &bitmaps[0][0])[nibble & 0xf]; // 8x8bits = 64 bits
 
   uint32_t *p = ((uint32_t * const) mapped_address);

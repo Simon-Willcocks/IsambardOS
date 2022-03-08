@@ -134,7 +134,9 @@ static bool image_is_valid()
   uint32_t *arm_code = (void *) ro_address.r;
   int i = 0;
 
-  arm_code[i++] = 0xea000008; // b 1f
+  arm_code[i++] = 0xea00000c; // b 1f
+  arm_code[i++] = 0xeafffffe; // 0: b 0b
+  arm_code[i++] = 0xeafffffe; // 0: b 0b
   arm_code[i++] = 0xeafffffe; // 0: b 0b
   arm_code[i++] = 0xeafffffe; // 0: b 0b
   arm_code[i++] = 0xeafffffe; // 0: b 0b
@@ -149,9 +151,12 @@ static bool image_is_valid()
   arm_code[i++] = 0xe3a01000; // mov	r1, #0
   arm_code[i++] = 0xe3a01000; // mov	r1, #0
   arm_code[i++] = 0xe3a01000; // mov	r1, #0
-
-  arm_code[i++] = 0xe2999001; // add r9, r9, #1
-  arm_code[i++] = 0xeafffffd; // 0: b 0b
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
+  arm_code[i++] = 0xe3a01000; // mov	r1, #0
 
   // Set the reset entry point to an infinite loop (Secure EL1 has no cache)
   arm_code[i++] = 0xe5912004; // ldr	r2, [r1, #4]
@@ -223,7 +228,7 @@ static bool image_is_valid()
   arm_code[0x100] = 0x11223344;
 
   static uint64_t __attribute__(( aligned( 16 ) )) stack[32];
-  //create_thread( qemu_timer_thread, stack + 32 );
+  create_thread( qemu_timer_thread, stack + 32 );
 
   return true;
 #else
@@ -514,13 +519,9 @@ asm ( "svc 0" );
 }
 
   switch (syndrome & 0xffc1e) { // CRm, CRn, Opc1, Opc2
-  case 0x00000: READ_ONLY( 0x410FD034 ); break; // midr 
+  case 0x00000: READ_ONLY( 0x410fb767 ); break; // midr ~ ARM1176 - does VPIDR_EL2 ever get used?  ARM11_HAL
   case 0xa0000: READ_ONLY( 0x80000f00 ); break; // mpidr
-  case 0x20000: READ_ONLY( 0x84448004 ); break; // G7.2.34    CTR, Cache Type Register
-  case 0x24000: READ_ONLY( 0x0A200023 ); break; // G7.2.26    CLIDR, Cache Level ID Register
-  case 0x08000: asm( "brk 66" ); break; // CSSELR 
-
-
+  case 0x20000: READ_ONLY( 0x1d152152 ); break; // G7.2.34    CTR, Cache Type Register
   case 0x00400: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( SCTLR_EL1, v ); } }; break; // SCTLR
   case 0x00c00: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( DACR32_EL2, v ); } } break; // G7.2.35 DACR, Domain Access Control Register
   case 0x40800: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( TCR_EL1, v ); } }; break; // Translation Table Base Control Register
@@ -562,6 +563,7 @@ asm ( "svc 0" );
   // FIXME Can't really need to do a full flush, surely?
   case 0x81c14: WRITE_ONLY; asm ( "dsb sy" ); asm ( "svc 0" ); break; // G7.2.29    CP15DSB, Data Synchronization Barrier System instruction
   case 0x81c0a: WRITE_ONLY; asm ( "isb sy" ); asm ( "svc 0" ); break; // G7.2.30    CP15ISB, Instruction Synchronization Barrier System instruction
+  case 0x24000: WRITE_ONLY; break; // G7.2.26    CLIDR, Cache Level ID Register
   case 0x01c0e: WRITE_ONLY; asm ( "isb sy\ndsb sy" ); break; // ARM DDI 0360F Invalidate Both Caches. Also flushes the branch target cache
   case 0xa1c14: WRITE_ONLY; asm ( "dmb sy" ); break; // G7.2.28         CP15DMB, Data Memory Barrier System instruction
   case 0x01c1c: WRITE_ONLY; asm ( "dmb sy" ); break; // Data Memory Barrier
@@ -627,404 +629,149 @@ static void illegal_execution_state( uint32_t syndrome ) { asm ( "brk 1" ); }
 
 /* This implements the HAL for RISC OS. */
 
-enum HAL {
-
-HAL_IRQEnable = 1,
-HAL_IRQDisable = 2,
-HAL_IRQClear = 3,
-HAL_IRQSource = 4,
-HAL_IRQStatus = 5,
-HAL_FIQEnable = 6,
-HAL_FIQDisable = 7,
-HAL_FIQDisableAll = 8,
-HAL_FIQClear = 9,
-HAL_FIQSource = 10,
-HAL_FIQStatus = 11,
-
-HAL_Timers = 12,
-HAL_TimerDevice = 13,
-HAL_TimerGranularity = 14,
-HAL_TimerMaxPeriod = 15,
-HAL_TimerSetPeriod = 16,
-HAL_TimerPeriod = 17,
-HAL_TimerReadCountdown = 18,
-
-HAL_CounterRate = 19,
-HAL_CounterPeriod = 20,
-HAL_CounterRead = 21,
-HAL_CounterDelay = 22,
-
-HAL_NVMemoryType = 23,
-HAL_NVMemorySize = 24,
-HAL_NVMemoryPageSize = 25,
-HAL_NVMemoryProtectedSize = 26,
-HAL_NVMemoryProtection = 27,
-HAL_NVMemoryIICAddress = 28,
-HAL_NVMemoryRead = 29,
-HAL_NVMemoryWrite = 30,
-
-HAL_IICBuses = 31,
-HAL_IICType = 32,
-HAL_IICSetLines = 33,
-HAL_IICReadLines = 34,
-HAL_IICDevice = 35,
-HAL_IICTransfer = 36,
-HAL_IICMonitorTransfer = 37,
-
-HAL_VideoFlybackDevice = 38,
-HAL_VideoSetMode = 39,
-HAL_VideoWritePaletteEntry = 40,
-HAL_VideoWritePaletteEntries = 41,
-HAL_VideoReadPaletteEntry = 42,
-HAL_VideoSetInterlace = 43,
-HAL_VideoSetBlank = 44,
-HAL_VideoSetPowerSave = 45,
-HAL_VideoUpdatePointer = 46,
-HAL_VideoSetDAG = 47,
-HAL_VideoVetMode = 48,
-HAL_VideoPixelFormats = 49,
-HAL_VideoFeatures = 50,
-HAL_VideoBufferAlignment = 51,
-HAL_VideoOutputFormat = 52,
-
-HAL_IRQProperties = 53,
-HAL_IRQSetCores = 54,
-HAL_IRQGetCores = 55,
-HAL_CPUCount = 56,
-HAL_CPUNumber = 57,
-HAL_SMPStartup = 58,
-
-HAL_MachineID = 59,
-HAL_ControllerAddress = 60,
-HAL_HardwareInfo = 61,
-HAL_SuperIOInfo = 62,
-HAL_PlatformInfo = 63,
-HAL_CleanerSpace = 64,
-
-HAL_UARTPorts = 65,
-HAL_UARTStartUp = 66,
-HAL_UARTShutdown = 67,
-HAL_UARTFeatures = 68,
-HAL_UARTReceiveByte = 69,
-HAL_UARTTransmitByte = 70,
-HAL_UARTLineStatus = 71,
-HAL_UARTInterruptEnable = 72,
-HAL_UARTRate = 73,
-HAL_UARTFormat = 74,
-HAL_UARTFIFOSize = 75,
-HAL_UARTFIFOClear = 76,
-HAL_UARTFIFOEnable = 77,
-HAL_UARTFIFOThreshold = 78,
-HAL_UARTInterruptID = 79,
-HAL_UARTBreak = 80,
-HAL_UARTModemControl = 81,
-HAL_UARTModemStatus = 82,
-HAL_UARTDevice = 83,
-HAL_UARTDefault = 84,
-
-HAL_DebugRX = 85,
-HAL_DebugTX = 86,
-
-HAL_PCIFeatures = 87,
-HAL_PCIReadConfigByte = 88,
-HAL_PCIReadConfigHalfword = 89,
-HAL_PCIReadConfigWord = 90,
-HAL_PCIWriteConfigByte = 91,
-HAL_PCIWriteConfigHalfword = 92,
-HAL_PCIWriteConfigWord = 93,
-HAL_PCISpecialCycle = 94,
-HAL_PCISlotTable = 95,
-HAL_PCIAddresses = 96,
-
-HAL_PlatformName = 97,
-
-HAL_InitDevices = 100,
-
-HAL_KbdScanDependencies = 101,
-
-HAL_PhysInfo = 105,
-
-HAL_Reset = 106,
-
-HAL_IRQMax = 107,
-
-HAL_USBControllerInfo = 108,
-HAL_USBPortPower = 109,
-HAL_USBPortIRQStatus = 110,
-HAL_USBPortIRQClear = 111,
-HAL_USBPortDevice = 112,
-
-HAL_TimerIRQClear = 113,
-HAL_TimerIRQStatus = 114,
-
-HAL_ExtMachineID = 115,
-
-HAL_VideoFramestoreAddress = 116,
-HAL_VideoRender = 117,
-HAL_VideoStartupMode = 118,
-HAL_VideoPixelFormatList = 119,
-HAL_VideoIICOp = 120,
-
-HAL_Watchdog = 121 };
+enum HAL { 
+HAL_IRQEnable = 0x1,
+HAL_IRQDisable = 0x2,
+HAL_IRQClear = 0x3,
+HAL_IRQSource = 0x4,
+HAL_IRQStatus = 0x5,
+HAL_FIQEnable = 0x6,
+HAL_FIQDisable = 0x7,
+HAL_FIQDisableAll = 0x8,
+HAL_FIQClear = 0x9,
+HAL_FIQSource = 0xA,
+HAL_FIQStatus = 0xB,
+HAL_Timers = 0xC,
+HAL_TimerDevice = 0xD,
+HAL_TimerGranularity = 0xE,
+HAL_TimerMaxPeriod = 0xF,
+HAL_TimerSetPeriod = 0x10,
+HAL_TimerPeriod = 0x11,
+HAL_TimerReadCountdown = 0x12,
+HAL_CounterRate = 0x13,
+HAL_CounterPeriod = 0x14,
+HAL_CounterRead = 0x15,
+HAL_CounterDelay = 0x16 };
 
 uint32_t timer_period = 0;
 
-void enable_irq( int n )
-{
-}
-
-static uint8_t nvram[256];
-
-static void *driver_view_of_VM_memory( uint32_t va )
-{
-  uint32_t *tt = (void*) (ro_address.r + 0x02008000); // FIXME read from vm ttbr0 register
-
-  uint32_t level1 = tt[(va >> 20) & 0xfff];
-  switch (level1 & 3) {
-  case 0: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case 1:
-    {
-      uint32_t *tt2 = (void*) (ro_address.r + (level1 & 0xfffffc00));
-      uint32_t level2 = tt2[(va >> 12) & 0xff];
-      // FIXME check validity
-      return (void*) (ro_address.r + ((va & 0x00000fff) | (level2 & 0xfffff000)));
-    }
-    break;
-  case 2: return (void*) (ro_address.r + ((va & 0x000fffff) | (level1 & 0xfff00000)));
-  case 3: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  }
-  return 0;
-}
-
-static void *physical_address_of_mapped_NS_memory( uint32_t va )
-{
-    return (void*) (((uint64_t) driver_view_of_VM_memory( 0xffff0000 )) - ro_address.r + vm_memory_base);
-}
-
-void do_HAL_NVMemoryRead()
-{
-  uint8_t *nv = &nvram[get_partner_register( 0 )];
-  uint8_t *buffer = driver_view_of_VM_memory( get_partner_register( 1 ) );
-  unsigned int n = get_partner_register( 2 );
-  for (int i = 0; i < n; i++) {
-    buffer[i] = nv[i];
-  }
-  set_partner_register( 0, n );
-}
-
-void do_HAL_NVMemoryWrite()
-{
-  uint8_t *nv = &nvram[get_partner_register( 0 )];
-  uint8_t *buffer = driver_view_of_VM_memory( get_partner_register( 1 ) );
-  unsigned int n = get_partner_register( 2 );
-  for (int i = 0; i < n; i++) {
-    nvram[i] = buffer[i];
-  }
-  set_partner_register( 0, n );
-}
-
-enum devices { DEV_TIMER };
-
-static void hvc32( uint32_t syndrome )
-{
-#ifdef TRACING
-  switch ((syndrome & 0xffff)) {
-  case 0x5000: asm( "brk 0x5000" ); break;
-  case 0x5001:
-    asm ( "svc 0\nmov x4, %[a]\nsvc 10" : : [a] "r" (physical_address_of_mapped_NS_memory( 0xffff0000 )) );
-    break;
-  case 0x5002: set_partner_register( 1, 0x30000000 ); show_state(); return;
-  case 0x5003: set_partner_register( 1, 1 ); show_state(); return;
-  case 0x5004: set_partner_register( 0, 143 ); show_state(); return;
-  case 0x5005: set_partner_register( 5, get_partner_register( 5 ) << 12 ); show_state(); return;
-  case 0x5006: set_partner_register( 3, 1024 ); show_state(); return;
-  case 0x5007: set_partner_register( 3, 0 ); show_state(); return;
-  case 0x5008: set_partner_register( 2, 128 ); show_state(); return;
-  case 0x5009: set_partner_register( 0, 2 ); show_state(); return; // ClaimSysHeapNode
-  case 0x500a: set_partner_register( 5, 0x30000000 ); show_state(); return; // ClaimSysHeapNode extend block
-  case 0x500b: set_partner_register( 0, 0xfc0180f8 ); show_state(); return;
-  }
-#endif
+static void hvc32( uint32_t syndrome ) { 
 
   // Isambard-aware RISC OS
 
   switch ((syndrome & 0xffff)) {
-
-  case HAL_IRQEnable:
-    enable_irq( get_partner_register( 0 ) );
+  case 0: // Init, nothing to do? It sets up a bunch of stuff...
+    asm ( "brk 77" ); // Shouldn't get called, trapped in OS
     break;
-  case HAL_IRQDisable: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_IRQClear: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_IRQSource: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_IRQStatus: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_FIQEnable: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_FIQDisable: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_FIQDisableAll: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_FIQClear: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_FIQSource: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_FIQStatus: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
 
-  case HAL_Timers: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_TimerDevice:
-    set_partner_register( 0, DEV_TIMER ); break;
-
+  case HAL_IRQEnable: asm( "brk %[n]" : : [n] "i" (__LINE__) );
+    {
+    }
+    break;
+  case HAL_IRQDisable: asm( "brk %[n]" : : [n] "i" (__LINE__) );
+    {
+    }
+    break;
+  case HAL_IRQClear: asm( "brk %[n]" : : [n] "i" (__LINE__) );
+    {
+    }
+    break;
+  case HAL_IRQSource: asm( "brk %[n]" : : [n] "i" (__LINE__) );
+    {
+    }
+    break;
+  case HAL_IRQStatus: asm( "brk %[n]" : : [n] "i" (__LINE__) );
+    {
+    }
+    break;
+  case HAL_FIQEnable: asm( "brk %[n]" : : [n] "i" (__LINE__) );
+    {
+    }
+    break;
+  case HAL_FIQDisable: asm( "brk %[n]" : : [n] "i" (__LINE__) );
+    {
+    }
+    break;
+  case HAL_FIQDisableAll: asm( "brk %[n]" : : [n] "i" (__LINE__) );
+    {
+    }
+    break;
+  case HAL_FIQClear: asm( "brk %[n]" : : [n] "i" (__LINE__) );
+    {
+    }
+    break;
+  case HAL_FIQSource: asm( "brk %[n]" : : [n] "i" (__LINE__) );
+    {
+    }
+    break;
+  case HAL_FIQStatus: asm( "brk %[n]" : : [n] "i" (__LINE__) );
+    {
+    }
+    break;
+  case HAL_Timers: asm( "brk %[n]" : : [n] "i" (__LINE__) );
+    {
+    }
+    break;
+  case HAL_TimerDevice: asm( "brk %[n]" : : [n] "i" (__LINE__) );
+    {
+    }
+    break;
   case HAL_TimerGranularity:
+    {
     switch (get_partner_register( 0 )) {
     case 0: set_partner_register( 0, 100 ); break;
     default: asm( "brk 0x9000" );
     }
+    }
     break;
-
-  case HAL_TimerMaxPeriod: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
+  case HAL_TimerMaxPeriod: asm( "brk %[n]" : : [n] "i" (__LINE__) );
+    {
+    }
+    break;
   case HAL_TimerSetPeriod:
     timer_period = get_partner_register( 0 );
     break;
-  case HAL_TimerPeriod: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_TimerReadCountdown: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_CounterRate:
-    set_partner_register( 0, 1000 ); break;
-  case HAL_CounterPeriod:
-    set_partner_register( 0, timer_period ); break;
-  case HAL_CounterRead:
-    set_partner_register( 0, 0 ); break;
-  case HAL_CounterDelay: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_NVMemoryType:
-    set_partner_register( 0, 0 ); break; // No memory available... FIXME
-    set_partner_register( 0, (3 << 10) | 3 ); break;
-  case HAL_NVMemorySize:
-    set_partner_register( 0, 256 ); break;
-  case HAL_NVMemoryPageSize:
-    set_partner_register( 0, 0 ); break;
-  case HAL_NVMemoryProtectedSize:
-    set_partner_register( 0, 0 ); break;
-  case HAL_NVMemoryProtection: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_NVMemoryIICAddress:
-    set_partner_register( 0, 0 ); break;
-  case HAL_NVMemoryRead:
-    do_HAL_NVMemoryRead(); break;
-  case HAL_NVMemoryWrite:
-    do_HAL_NVMemoryWrite(); break;
-
-  case HAL_IICBuses:
-    set_partner_register( 0, 1 ); break; // FIXME in RISC OS - it can't be essential that one exists, can it?
-  case HAL_IICType:
-    set_partner_register( 0, (210 << 20) | 2 ); break;
-  case HAL_IICSetLines: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_IICReadLines: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_IICDevice:
-    set_partner_register( 0, 1 ); break; // FIXME in RISC OS - it can't be essential that one exists, can it?
-  case HAL_IICTransfer:
-    set_partner_register( 0, 2000 ); break; // IRQ descriptor
-  case HAL_IICMonitorTransfer: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_VideoFlybackDevice: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoSetMode: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoWritePaletteEntry: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoWritePaletteEntries: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoReadPaletteEntry: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoSetInterlace: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoSetBlank: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoSetPowerSave: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoUpdatePointer: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoSetDAG: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoVetMode: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoPixelFormats: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoFeatures: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoBufferAlignment: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoOutputFormat: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_IRQProperties: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_IRQSetCores: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_IRQGetCores: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_CPUCount: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_CPUNumber: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_SMPStartup: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_MachineID: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_ControllerAddress: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_HardwareInfo: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_SuperIOInfo: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PlatformInfo: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_CleanerSpace: 
-    set_partner_register( 0, -1 ); break; // Not needed
-
-  case HAL_UARTPorts: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTStartUp: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTShutdown: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTFeatures: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTReceiveByte: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTTransmitByte: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTLineStatus: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTInterruptEnable: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTRate: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTFormat: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTFIFOSize: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTFIFOClear: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTFIFOEnable: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTFIFOThreshold: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTInterruptID: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTBreak: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTModemControl: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTModemStatus: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTDevice: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTDefault: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_DebugRX: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_DebugTX:
+  case HAL_TimerPeriod:
+    set_partner_register( 0, timer_period );
+    break;
+  case HAL_TimerReadCountdown: asm( "brk %[n]" : : [n] "i" (__LINE__) );
     {
-    static int x = 10;
-    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 1060 ), N( get_partner_register( 4 ) ), N( 0xffff00ff ) );
-    TRIVIAL_NUMERIC_DISPLAY__show_8bits( tnd, N( x ), N( 1070 ), N( get_partner_register( 0 ) ), N( 0xffff00ff ) );
-    x += 20;
-    if (get_partner_register( 0 ) == 0xa) x = 10; // Newline!
     }
     break;
-  case HAL_PCIFeatures: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PCIReadConfigByte: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PCIReadConfigHalfword: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PCIReadConfigWord: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PCIWriteConfigByte: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PCIWriteConfigHalfword: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PCIWriteConfigWord: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PCISpecialCycle: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PCISlotTable: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PCIAddresses: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
+  case HAL_CounterRate: asm( "brk %[n]" : : [n] "i" (__LINE__) );
+    set_partner_register( 0, 1000 );
+    break;
+  case HAL_CounterPeriod: asm( "brk %[n]" : : [n] "i" (__LINE__) );
+    {
+    set_partner_register( 0, timer_period ); break;
+    }
+    break;
+  case HAL_CounterRead: asm( "brk %[n]" : : [n] "i" (__LINE__) );
+    {
+    }
+    break;
+  case HAL_CounterDelay: asm( "brk %[n]" : : [n] "i" (__LINE__) );
+    {
+    sleep_ms( get_partner_register( 0 ) / 1000 );
+    }
+    break;
 
-  case HAL_PlatformName: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_InitDevices: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_KbdScanDependencies: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_PhysInfo: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_Reset: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_IRQMax:
-    set_partner_register( 0, 64 + 21 ); break;
-
-  case HAL_USBControllerInfo: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_USBPortPower: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_USBPortIRQStatus: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_USBPortIRQClear: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_USBPortDevice: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_TimerIRQClear: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_TimerIRQStatus: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_ExtMachineID: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_VideoFramestoreAddress: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoRender: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoStartupMode: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoPixelFormatList: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoIICOp: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_Watchdog: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  default: asm( "brk 0x9000" );
+  case 86: // DebugTX, nothing?
+{
+static int x = 10;
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 1060 ), N( get_partner_register( 4 ) ), N( 0xffff00ff ) );
+TRIVIAL_NUMERIC_DISPLAY__show_8bits( tnd, N( x ), N( 1070 ), N( get_partner_register( 0 ) ), N( 0xffff00ff ) );
+x += 20;
+}
+    break;
+  case 87: // DebugRX, from where?
+    break;
+  case 107: // 0xb6 - HAL_IRQMax
+    set_partner_register( 0, 64 + 21 );
+    break;
+  case 0x5555: // Crashed?
+ asm( "mov x0, %[p]\nsvc 10" : : [p] "r" (vm_memory_base + 0x0200b000) : "x0" );
+  default:asm ( "brk 3" );
   }
 }
 
@@ -1157,27 +904,11 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 60 ), N( system_timer.c
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 70 ), N( system_timer.compare[1] ), N( system_timer.control_status & 2 ? 0xffff0000 : 0xff00ff00 ) );
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 80 ), N( system_timer.compare[2] ), N( system_timer.control_status & 4 ? 0xffff0000 : 0xff00ff00 ) );
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 90 ), N( system_timer.compare[3] ), N( system_timer.control_status & 8 ? 0xffff0000 : 0xff00ff00 ) );
-
-if (pc > 0xfc000000) {
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( 190 ), N( physical_address_of_mapped_NS_memory( 0xfc000000 ) ), N( 0xffff0000 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( 200 ), N( physical_address_of_mapped_NS_memory( 0xffff0000 ) ), N( 0xffff0000 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 190 ), N( driver_view_of_VM_memory( 0xfc000000 ) ), N( 0xffff0000 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 200 ), N( driver_view_of_VM_memory( 0xffff0000 ) ), N( 0xffff0000 ) );
-/*
-uint32_t *zp = driver_view_of_VM_memory( 0xffff0000 );
-zp[0] = 0xe1a00000;
-zp[1] = 0xe1a00000;
-zp[2] = 0xe1a00000;
-zp[3] = 0xeafffffe;
-*/
-    //asm ( "mov x4, %[a]\nsvc 10" : : [a] "r" (physical_address_of_mapped_NS_memory( 0xfc080000 )) );
-}
 static stop_count = 0;
 if (++stop_count == 100000 || pc == 0xffff000c) {
     stop_count = 0;
     show_state();
-    sleep_ms( 5000 );
-    asm ( "svc 0\nmov x4, %[a]\nsvc 10" : : [a] "r" (physical_address_of_mapped_NS_memory( 0xffff0000 )) );
+    asm ( "smc 7" );
     uint64_t r;
     asm ( "mov x0, %[n]\nsvc 7\nmov %[r], x0" : [r] "=&r" (r) : [n] "r" (32) : "x0" );
 }
@@ -1808,16 +1539,10 @@ uint64_t vm_handler( uint64_t pc, uint64_t syndrome, uint64_t fault_address, uin
   static int count = 0;
   uint64_t new_pc = pc; // Retry instruction by default
 
-  switch (syndrome) { // This is a terrible hack to remove cleaning the cache from NS EL1
-  case 0x4a006000: asm ( "svc 0" ); return get_partner_register( 18 ); // mov pc, lr at HAL_InvalidateCache_ARMvF
-  case 0x4a006001: asm ( "svc 0" ); show_state(); { static int y = 10; TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 220 ), N( y ), N( get_partner_register( 0 ) ), N( 0xffffffff ) ); TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 300 ), N( y ), N( get_partner_register( 18 ) ), N( 0xffffffff ) ); y+= 10; } if ((get_partner_register( 0 ) >> 16) != 0xaaaa) { sleep_ms( 1000 ); return pc; } else asm( "brk 99" );
-  }
-
-if ((syndrome & 0xfc000000) == 0x48000000 && (syndrome & 0xfff) != 0x0056) { // hvc32
+if ((syndrome & 0xfc000000) == 0x48000000) {
 static int y = 30;
-TRIVIAL_NUMERIC_DISPLAY__show_8bits( tnd, N( 1200 ), N( y ), N( syndrome & 0xff ), N( 0xffffffff ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1220 ), N( y ), N( pc ), N( 0xffffffff ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1300 ), N( y ), N( get_partner_register( 18 ) ), N( 0xffffffff ) );
+TRIVIAL_NUMERIC_DISPLAY__show_8bits( tnd, N( 1100 ), N( y ), N( syndrome & 0xff ), N( 0xffffffff ) );
+TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1120 ), N( y ), N( pc ), N( 0xffffffff ) );
 y += 10;
 if (y > 1000) y = 30;
 }
@@ -1826,7 +1551,7 @@ static uint32_t recent[5] = { 0 };
 show = true;
 for (int i = 0; show && i < 5; i++) {
   if (recent[i] == fault_address) {
-    show = false;
+    //show = false;
   }
 }
 if (show) {
@@ -1873,7 +1598,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( x-70 ), N( y+10 ), N( pc ), N( 0xf
   case 0b010000: asm ( "brk 0b010000" ); break; // Never happens or is unimplemented
   case 0b010001: asm ( "brk 0b010001" ); break; // Never happens or is unimplemented
   case 0b010010: hvc32( syndrome ); break;
-  case 0b010011: smc32( syndrome ); break;
+  case 0b010011: smc32( syndrome ); new_pc += 4; break;
   case 0b010100: asm ( "brk 0b010100" ); break; // Never happens or is unimplemented
   case 0b010101: asm ( "brk 0b010101" ); break; // Never happens or is unimplemented
   case 0b010110: asm ( "brk 0b010110" ); break; // Never happens or is unimplemented
@@ -1921,7 +1646,6 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( x-70 ), N( y+10 ), N( pc ), N( 0xf
   }
 
 if (show) asm ( "svc 0" );
-asm ( "isb sy\ndsb sy\nsvc 0" ); // FIXME FIXME FIXME
 
   return new_pc;
 }
@@ -1964,8 +1688,7 @@ void entry()
 
     for (int i = 0; i < 32; i++) {
       Aarch64_VMSA_entry entry = Aarch64_VMSA_block_at( vm_memory_base + (i << 21) );
-      // Leave the caching to the OS
-      entry = Aarch64_VMSA_uncached_memory( entry );
+      entry = Aarch64_VMSA_write_back_memory( entry );
       entry.raw |= (1 <<10); // AF
       entry = Aarch64_VMSA_L2_rwx( entry );
       tt[i] = entry;
@@ -1983,20 +1706,12 @@ void entry()
 
     // This seems to override the bits in HCR_EL2:
     uint32_t cp15_traps = 0xffff;
-/*
-    cp15_traps &= ~(1 << 8); // Don't trap TLB maintenance instructions.
-    // cp15_traps &= ~(1 << 7); // Don't trap cache maintenance instructions.  STOPS WORKING!
+    //cp15_traps &= ~(1 << 7); // Don't trap cache maintenance instructions.  STOPS WORKING!
+    // This stops with an undefined instruction error, internal to the NS EL1.
+    // So, how about I trap undefined instructions?
+    //cp15_traps &= ~(1 << 8); // Don't trap TLB maintenance instructions.
+    //cp15_traps &= ~(1 << 5); // Don't trap fault status registers
     cp15_traps &= ~(1 << 6); // Don't trap fault address registers
-    cp15_traps &= ~(1 << 5); // Don't trap fault status registers
-
-    // Experimental
-    cp15_traps &= ~(1 << 4);
-    cp15_traps &= ~(1 << 3);
-    //cp15_traps &= ~(1 << 1);
-    //cp15_traps &= ~(1 << 0);
-*/
-    cp15_traps &= ~(1 << 2);
-
     set_vm_system_register( HSTR_EL2, cp15_traps );
     //set_vm_system_register( HSTR_EL2, 0 );
 
@@ -2009,22 +1724,7 @@ void entry()
 
     uint64_t next_pc = 0;
 
-// These should be the undef and Prefetch abort 
-// set_block( 0x10044, 0x5000 ); // << This happens! But is it simply lazy address mapping?
-//set_block( 0x1004c, 0x5001 );
-//set_block( 0x18060, 0x5002 );
-//  stage2_data_abort still needed, for tag interface called by HAL_Init.
-// InitDynamicAreas, 0x1b6ac
-set_block( 0x283b8, 0x5003 ); // After InitDynamicAreas, before creating RMA
-set_block( 0x283ec, 0x5004 ); // Screen
-set_block( 0x28408, 0x5005 ); // About to clamp screen size
-set_block( 0x1b780, 0x5006 ); //    mov     r3, #1024   InitDynamicAreas, about to ClaimSysHeapNode
-set_block( 0x1b78c, 0x5007 ); //    mov     r3, #0      InitDynamicAreas, about to DynArea_OHinit_loop
-set_block( 0x1b730, 0x5008 ); //    mov     r2, #128    InitDynamicAreas, after first CreateChocolateBlockArray
-set_block( 0x18058, 0x5009 ); //    mov     r0, #2      ClaimSysHeapNode
-set_block( 0x18090, 0x500a ); //    mov     r5, #0x30000000 ClaimSysHeapNode extend block
-set_block( 0x180ec, 0x500b ); //    ClaimSysHeapNode extend block failed
-
+//set_block( 4, 0x5555 );
     for (;;) {
       next_pc = switch_to_partner( vm_handler, next_pc );
     }

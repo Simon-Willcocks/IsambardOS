@@ -1314,7 +1314,7 @@ thread_switch __attribute__(( noinline )) SEL1_LOWER_AARCH64_SYNC_CODE( void *op
     change_map( core, result.now, result.now->current_map );
   }
   if (core->runnable != result.now) {
-    asm ( "smc 0x4444" ); // FIXME, can't I just set core->runnable here?
+    asm ( "smc 0x7777" ); // FIXME, can't I just set core->runnable here?
   }
   return result;
 }

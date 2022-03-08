@@ -200,7 +200,9 @@ void __attribute__(( noreturn, noinline, optimize( "-Os" ) )) el1_enter_thread( 
     if (0 == threads.now->partner) {
       asm ( "mov x28, %[reg]\nmov x29, %[then]\nsmc 3" : : [reg] "r" (threads.now), [then] "r" (threads.then) );
     }
-    uint64_t runnable;
+
+// Sanity checks...
+    thread_context *runnable;
     asm ( "mov %[r], sp\norr %[r], %[r], #0xff0\nldr %[r], [%[r], #8]" : [r] "=r" (runnable) );
     if (runnable != threads.now) {
       asm ( "mov x27, %[r]\nsmc 0x99" : : [r] "r" (runnable) );
@@ -208,6 +210,8 @@ void __attribute__(( noreturn, noinline, optimize( "-Os" ) )) el1_enter_thread( 
     if (0xfffffffffe1feb80ull == (uint64_t) threads.now) {
       asm ( "mov x27, %[r]\nsmc 0x98" : : [r] "r" (runnable) );
     }
+// end
+
     asm ( "dsb sy\nsmc 0" );
   }
   // Load thread.now.pc, thread.now.spsr
