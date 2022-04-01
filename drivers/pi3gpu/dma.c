@@ -10,15 +10,6 @@ extern TRIVIAL_NUMERIC_DISPLAY tnd;
 
 #define N( n ) NUMBER__from_integer_register( n )
 
-void *memset(void *s, int c, unsigned long long n)
-{
-  char *p = s;
-  for (unsigned long long i = 0; i < n; i++) {
-    p[i] = c;
-  }
-  return s;
-}
-
 void expose_dma() {}
 /*
 {

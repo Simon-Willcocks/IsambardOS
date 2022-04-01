@@ -3,7 +3,7 @@
 // This file is the entry point for EL3, it performs initialisation, then drops to Secure EL1
 
 // memset, the only C library function used in the kernel (mostly because the optimiser uses it).
-void *memset(void *s, int c, unsigned long long n);
+void *memset(void *s, int c, long unsigned int n);
 
 #include "kernel.h"
 #include "exclusive.h"
@@ -109,7 +109,7 @@ void __attribute__(( noreturn, noinline )) c_el3_nommu( Core *core, unsigned num
   // But use local variables with care, if at all!
   memset( core, 0, sizeof( Core ) );
 
-if (number != 0) { for (;;) { asm ( "wfi" ); } }
+if (number != 0) { for (;;) { asm ( "wfi" ); } } // TODO TODO TODO!!
   // Note: the address of the present array will be an offset from _start.
   el3_synchronised_initialise( core, number, present_bits );
 

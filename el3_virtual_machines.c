@@ -9,6 +9,8 @@
 #include "kernel_translation_tables.h"
 #include "isambard_syscalls.h"
 
+extern void el3_prepare_el2_for_entry( Core *core );
+
 #ifndef ENSTRING
 #define ENSTRING2( n ) #n
 #define ENSTRING( n ) ENSTRING2( n )
@@ -105,9 +107,9 @@ static void show_thread( thread_context *thread, uint32_t x, uint32_t colour )
   invalidate_all_caches();
   for (int i = 0; i < 31; i++) { show_qword( x, 615+10*i, thread->regs[i], colour ); }
 
-  show_qword( x, 940, thread->prev, colour );
-  show_qword( x, 950, thread->next, colour );
-  show_qword( x, 960, thread->partner, colour );
+  show_qword( x, 940, (uint64_t) thread->prev, colour );
+  show_qword( x, 950, (uint64_t) thread->next, colour );
+  show_qword( x, 960, (uint64_t) thread->partner, colour );
 
   show_qword( x, 970, thread->pc, colour );
   show_word( x, 980, thread->spsr, colour );
@@ -158,6 +160,9 @@ void c_show_page( uint64_t page )
   show_vm_regs();
 
   thread_context *runnable;
+  asm ( "mov %[t], sp\norr %[t], %[t], #0xff0\nldr %[t], [%[t],#8]"
+        : [t] "=&r" (runnable) );
+
   runnable = (void *) (((uint64_t) runnable) & lomem_bits);
   show_thread( runnable, 400, White );
   while (runnable->partner == 0) {
@@ -169,7 +174,7 @@ void c_show_page( uint64_t page )
   show_thread( runnable->partner, 720, Yellow );
 
   show_word( 720, 30, page, Yellow );
-  show_page( base + (page & (1 << 21)-1) );
+  show_page( (void*) (base + (page & ((1 << 21)-1))) );
   for (int count=0;;count++) { show_word( 500, 1000, count, Green ); invalidate_all_caches(); }
 }
 
@@ -289,20 +294,20 @@ show( scr_el3 );
   for (int count=0;;count++) { show_word( 500, 1000, count, Blue ); invalidate_all_caches(); }
 for (int i = 0; i < 4; i++)
 {
-  show_page( ((i+8) << 12) + (6 << 21) );
+  show_page( (void*) (uint64_t) (((i+8) << 12) + (6 << 21)) );
   invalidate_all_caches();
   for (uint64_t t = 0; t < 10000000000ull; t++) { asm ( "" ); }
 }
   for (uint64_t t = 0; t < 50000000000ull; t++) { asm ( "" ); }
 
 {
-  show_page( (0x22 << 12) + (6 << 21) );
+  show_page( (void*) ((0x22ull << 12) + (6 << 21)) );
   invalidate_all_caches();
   for (uint64_t t = 0; t < 100000000000ull; t++) { asm ( "" ); }
 }
 
   for (int p = 0; p < 64; p++) {
-    show_page( (p << 12) + (6 << 21) );
+    show_page( (void*) (uint64_t) ((p << 12) + (6 << 21)) );
     invalidate_all_caches();
     for (int t = 0; t < 1000000000; t++) { asm ( "" ); }
   }
@@ -661,7 +666,7 @@ for (int i = 0; i < 4; i++)
 
 #include "aarch64_vector_table.h"
 
-vm_state default_vm_state;
+vm_state default_vm_state = { 0 };
 
 static void initialise_default_vm()
 {

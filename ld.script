@@ -13,9 +13,11 @@ SECTIONS
   .init : { *(.init) }
   .text : { *(.text) }
   .rodata : { *(.rodata) }
+  .rel.ro : { *(.data.rel.ro*) }
   . = ALIGN (4096);
   at_rw_start = .;
   .data : { *(.data) }
+  .rel.rw : { *(.data.rel.*) }
   .bss : { *(.bss) }
   . = ALIGN (4096);
   at_rw_end = .;
@@ -24,4 +26,7 @@ SECTIONS
   . = ALIGN (4096);
   initial_first_free_page = .;
   pad_to_here = .; /* Needed for build.sh */
+
+/* /DISCARD/ : { *(.*) ; } */
+
 }

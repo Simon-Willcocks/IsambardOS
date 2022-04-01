@@ -35,20 +35,27 @@ vm_state __attribute__(( aligned( 16 ) )) vm[2] = {
       .vbar_el1 = (uint64_t) VBAR_SEL1
     } };
 
-extern void _start(); // For the PC-relative address of the start of the code
+static inline uint8_t *start_address()
+{
+  extern void _start();
+  uint8_t *result;
+  // Note: Assumes _start is on a page boundary (which it always will be)
+  asm ( "adrp %[result], _start" : [result] "=r" (result) );
+  return result;
+}
 
 // w18 contains a thread code, locks may contain two thread codes
 // Valid thread codes are non-zero.
 static inline uint32_t thread_code( thread_context *t )
 {
   if (0 == t) return 0;
-  return ((uint8_t*) t) - (uint8_t*) _start;
+  return ((uint8_t*) t) - start_address();
 }
 
 static inline thread_context *thread_from_code( uint32_t c )
 {
   if (c == 0) return 0;
-  return (thread_context*) (((uint8_t*) _start) + c);
+  return (thread_context*) (start_address() + c);
 }
 
 #include "doubly_linked_lists.h"
@@ -121,8 +128,7 @@ uint64_t memory_allocator_driver_start = max_physical_memory;
 // address of _start, when their address is taken, too.
 static uint64_t phys_addr( void *kernel_addr )
 {
-  uint8_t *start = (uint8_t*) _start;
-  return ((uint8_t*) kernel_addr) - start;
+  return ((uint8_t*) kernel_addr) - start_address();
 }
 
 #define AARCH64_VECTOR_TABLE_NAME VBAR_SEL1
@@ -193,7 +199,7 @@ static bool could_be_in_heap( uint32_t p )
 
 static void *heap_pointer_from_offset( uint32_t heap_offset )
 {
-  uint8_t *top = ((uint8_t*) _start) + top_of_kernel_working_memory;
+  uint8_t *top = start_address() + top_of_kernel_working_memory;
   return top - heap_offset;
 }
 
@@ -204,11 +210,11 @@ static void *heap_pointer_from_offset_lsr4( uint32_t heap_offset_lsr4 )
 
 static uint32_t heap_offset( void *p )
 {
-  uint8_t *top = ((uint8_t*) _start) + top_of_kernel_working_memory;
+  uint8_t *top = start_address() + top_of_kernel_working_memory;
   return (top - (uint8_t*)p);
 }
 
-static uint32_t heap_offset_lsr4( void *p )
+static uint32_t __attribute__(( optimize( 1 ) )) heap_offset_lsr4( void *p )
 {
   return heap_offset( p ) >> 4;
 }
@@ -227,7 +233,7 @@ static void read_heap( uint64_t offset, uint64_t length, void *destination )
     BSOD( __COUNTER__ );
   }
 
-  void *source = (uint8_t*) _start + kernel_heap_top - offset;
+  void *source = start_address() + kernel_heap_top - offset;
 
   uint64_t *s = source;
   uint64_t *d = destination;
@@ -250,7 +256,7 @@ static void write_heap( uint64_t offset, uint64_t length, void *source )
     BSOD( __COUNTER__ );
   }
 
-  void *destination = (uint8_t*) _start + kernel_heap_top - offset;
+  void *destination = start_address() + kernel_heap_top - offset;
 
   uint64_t *s = source;
   uint64_t *d = destination;
@@ -267,7 +273,7 @@ void *allocate_heap( uint64_t size )
   do {
     new_bottom = load_exclusive_word( &kernel_heap_bottom ) - size;
   } while (!store_exclusive_word( &kernel_heap_bottom, new_bottom ));
-  return (void*) (((uint8_t*)_start) + new_bottom);
+  return (void*) (start_address() + new_bottom);
 }
 
 static void free_heap( uint64_t offset, uint64_t size )
@@ -290,7 +296,7 @@ static const uint64_t free_marker = 0x00746e4965657246;
 
 static Interface *interfaces()
 {
-  return (Interface*) (((uint8_t*) _start) + kernel_interfaces_offset);
+  return (Interface*) (start_address() + kernel_interfaces_offset);
 }
 
 static Interface *interface_from_index( uint32_t index )
@@ -581,7 +587,7 @@ static Aarch64_VMSA_entry with_physical_memory_attrs( Aarch64_VMSA_entry entry, 
   return entry;
 }
 
-static VirtualMemoryBlock *find_vmb( thread_context *thread, uint64_t fa )
+static VirtualMemoryBlock * __attribute__(( optimize( 1 ) )) find_vmb( thread_context *thread, uint64_t fa )
 {
   uint64_t fa_page = (fa >> level3_lsb);
   Interface *map = interfaces()+thread->current_map;
@@ -723,7 +729,7 @@ void map_initial_storage( Core *core0, unsigned initial_heap, unsigned initial_i
   int heap_pages = pages_needed_for( initial_heap );
   int interface_pages = pages_needed_for( initial_interfaces * sizeof( Interface ) );
 
-  kernel_interfaces_offset = ((uint8_t*) (core0 + number_of_cores) - (uint8_t*)_start);
+  kernel_interfaces_offset = ((uint8_t*) (core0 + number_of_cores) - start_address());
   int interfaces_page = (kernel_interfaces_offset >> 12);
   integer_register first_physical_interfaces_page = first_free_page;
   first_free_page += (interface_pages << 12);

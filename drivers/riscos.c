@@ -16,10 +16,10 @@ static const NUMBER ro_address = { .r = 0x8000000 };
 static const NUMBER rom_size = { .r = 6*1024*1024 }; // Should be 5, when find_and_map_memory works properly!
 static const uint32_t real_rom_size = 5*1024*1024;
 static const NUMBER rom_load = { .r = 0 }; // Offset into virtual machine memory (Only working on 2MB boundaries atm.)
-static const NUMBER riscos_ram_size = { .r = 64*1024*1024 };
 
 static const NUMBER disc_address = { .r = 0x363c0 }; // RISCOS.IMG block number
 static uint32_t const expected_crc = 0x0c84b58f;
+static const NUMBER riscos_ram_size = { .r = 64*1024*1024 };
 
 static uint64_t vm_memory_base = 0;
 
@@ -30,7 +30,7 @@ PHYSICAL_MEMORY_BLOCK riscos_memory;
 
 ISAMBARD_INTERFACE( TRIVIAL_NUMERIC_DISPLAY )
 #include "interfaces/client/TRIVIAL_NUMERIC_DISPLAY.h"
-#define N( n ) NUMBER__from_integer_register( n )
+#define N( n ) NUMBER__from_integer_register( (uint64_t) (n) )
 
 TRIVIAL_NUMERIC_DISPLAY tnd = {};
 
@@ -45,13 +45,10 @@ void show_state()
 
 static void load_guest_os( PHYSICAL_MEMORY_BLOCK riscos_memory )
 {
-#ifdef QEMU
-  // Just writes to the VM memory when asked to check the image
-#else
   PHYSICAL_MEMORY_BLOCK rom_memory;
   rom_memory = PHYSICAL_MEMORY_BLOCK__subblock( riscos_memory, rom_load, rom_size );
 
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 910 ), PHYSICAL_MEMORY_BLOCK__physical_address( rom_memory ), N( 0xff0000ff ) );
+  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 910 ), PHYSICAL_MEMORY_BLOCK__physical_address( rom_memory ), N( 0xff0000ff ) );
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 10 ), N( 0x12121212 ), N( 0xfffff0f0 ) );
 
   NUMBER timer0 = DRIVER_SYSTEM__get_ms_timer_ticks( driver_system() );
@@ -66,7 +63,6 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 910 ), PHYSICAL_MEMORY_
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 120 ), N( timer1.r - timer0.r ), N( 0xfffff0f0 ) );
 
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 10 ), N( 0x13131313 ), N( 0xfffff0f0 ) );
-#endif
 }
 
 static uint32_t software_crc32( const uint8_t *p, uint32_t len )
@@ -114,7 +110,7 @@ static void qemu_timer_thread()
 }
 #endif
 
-#define TRACING
+//#define TRACING
 #ifdef TRACING
 
 static void set_block( uint32_t addr, int code )
@@ -130,103 +126,6 @@ static void set_block( uint32_t addr, int code )
 
 static bool image_is_valid()
 {
-#ifdef QEMU
-  uint32_t *arm_code = (void *) ro_address.r;
-  int i = 0;
-
-  arm_code[i++] = 0xea000008; // b 1f
-  arm_code[i++] = 0xeafffffe; // 0: b 0b
-  arm_code[i++] = 0xeafffffe; // 0: b 0b
-  arm_code[i++] = 0xeafffffe; // 0: b 0b
-  arm_code[i++] = 0xeafffffe; // 0: b 0b
-  arm_code[i++] = 0xeafffffe; // 0: b 0b
-  arm_code[i++] = 0xeafffffe; // 0: b 0b
-  arm_code[i++] = 0xeafffffe; // 0: b 0b
-
-  arm_code[i++] = 0xe3a01000; // mov	r1, #0
-  arm_code[i++] = 0xe3a01000; // mov	r1, #0
-  arm_code[i++] = 0xe3a01000; // mov	r1, #0
-  arm_code[i++] = 0xe3a01000; // mov	r1, #0
-  arm_code[i++] = 0xe3a01000; // mov	r1, #0
-  arm_code[i++] = 0xe3a01000; // mov	r1, #0
-
-  arm_code[i++] = 0xe2999001; // add r9, r9, #1
-  arm_code[i++] = 0xeafffffd; // 0: b 0b
-
-  // Set the reset entry point to an infinite loop (Secure EL1 has no cache)
-  arm_code[i++] = 0xe5912004; // ldr	r2, [r1, #4]
-  arm_code[i++] = 0xe5812000; // str	r2, [r1]
-
-  // DACR
-  arm_code[i++] = 0xe3a07001; // mov	r7, #1
-  arm_code[i++] = 0xee037f10; // mcr	15, 0, r7, cr3, cr0, {0}
-
-  arm_code[0x2000] = 0x00008c02; // 	Map first megabyte to byte 0
-
-  arm_code[i++] = 0xe3a09902; // mov	r9, #32768	; 0x8000
-  arm_code[i++] = 0xe3899002; // orr	r9, r9, #2
-  arm_code[i++] = 0xee029f10; // mcr	15, 0, r9, cr2, cr0, {0}
-
-  {
-  arm_code[i++] = 0xe3a0947f; // mov r9, #0x78000000
-  arm_code[i++] = 0xe3a01000; // mov	r1, #0
-  int loop = i;
-                              // loop:
-  arm_code[i++] = 0xe2999001; // add r9, r9, #1
-  arm_code[i++] = 0xe5819400; // str	r9, [r1, #1024]	; 0x400
-  uint32_t branch = 0x5afffffe - (i - loop);
-  arm_code[i++] = branch; // bpl loop
-  }
-
-  arm_code[i++] = 0xe3a0860e; // mov	r8, #14680064	; 0xe00000
-  arm_code[i++] = 0xe3888c3e; // orr	r8, r8, #15872	; 0x3e00
-  arm_code[i++] = 0xe388802f; // orr	r8, r8, #47	; 0x2f
-  arm_code[i++] = 0xee018f10; // mcr	15, 0, r8, cr1, cr0, {0}
-
-  {
-  arm_code[i++] = 0xe3a0947f; // mov r9, #0x78000000
-  arm_code[i++] = 0xe3a01000; // mov	r1, #0
-  int loop = i;
-                              // loop:
-  arm_code[i++] = 0xe2999001; // add r9, r9, #1
-  arm_code[i++] = 0xe5819400; // str	r9, [r1, #1024]	; 0x400
-  uint32_t branch = 0x5afffffe - (i - loop);
-  arm_code[i++] = branch; // bpl loop
-  }
-
-  arm_code[i++] = 0xee018f10; // mcr	15, 0, r8, cr1, cr0, {0}
-  arm_code[i++] = 0xee018f10; // mcr	15, 0, r8, cr1, cr0, {0}
-  arm_code[i++] = 0xee018f10; // mcr	15, 0, r8, cr1, cr0, {0}
-
-  {
-  arm_code[i++] = 0xe3a0947f; // mov r9, #0x78000000
-  arm_code[i++] = 0xe3a01000; // mov	r1, #0
-  int loop = i;
-                              // loop:
-  arm_code[i++] = 0xe2999001; // add r9, r9, #1
-  arm_code[i++] = 0xe5819400; // str	r9, [r1, #1024]	; 0x400
-  uint32_t branch = 0x5afffffe - (i - loop);
-  arm_code[i++] = branch; // bpl loop
-  }
-
-  arm_code[i++] = 0xe3a0743f; // 	mov	r7, #1056964608	; 0x3f000000
-  arm_code[i++] = 0xe3877602; // 	orr	r7, r7, #2097152	; 0x200000
-  arm_code[i++] = 0xe587601c; // 	str	r6, [r7, #28]
-  arm_code[i++] = 0xe587601c; // 	str	r6, [r7, #28]
-
-  uint32_t branch = 0xeafffffe - i + 12;
-  arm_code[i++] = branch; // b 0x30
-
-  for (int j = 0; j < i; j++) {
-    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1000 ), N( j*12 + 100 ), NUMBER__from_integer_register( arm_code[j] ), N( 0xffffffff ) );
-  }
-  arm_code[0x100] = 0x11223344;
-
-  static uint64_t __attribute__(( aligned( 16 ) )) stack[32];
-  //create_thread( qemu_timer_thread, stack + 32 );
-
-  return true;
-#else
   uint32_t crc;
   const unsigned char* rom_base = (void*) (ro_address.r + rom_load.r);
 
@@ -258,7 +157,6 @@ static bool image_is_valid()
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 180 ), N( top - 10 ), NUMBER__from_integer_register( crc ), N( 0xffffffff ) );
 
   return true; // The ROM is likely to change, keep going anyway
-#endif
 }
 
 static struct {
@@ -806,7 +704,7 @@ void do_HAL_NVMemoryRead()
   uint8_t *nv = &nvram[get_partner_register( 0 )];
   uint8_t *buffer = driver_view_of_VM_memory( get_partner_register( 1 ) );
   unsigned int n = get_partner_register( 2 );
-  for (int i = 0; i < n; i++) {
+  for (uint64_t i = 0; i < n; i++) {
     buffer[i] = nv[i];
   }
   set_partner_register( 0, n );
@@ -817,7 +715,7 @@ void do_HAL_NVMemoryWrite()
   uint8_t *nv = &nvram[get_partner_register( 0 )];
   uint8_t *buffer = driver_view_of_VM_memory( get_partner_register( 1 ) );
   unsigned int n = get_partner_register( 2 );
-  for (int i = 0; i < n; i++) {
+  for (uint64_t i = 0; i < n; i++) {
     nvram[i] = buffer[i];
   }
   set_partner_register( 0, n );
@@ -1101,13 +999,13 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 460 ), N( p[2] ), N( 0x
       break;
 
     case 0x0004801f: // ARM2VC_Tag_FBSetTouchBuf Touch screen
-      virtual_Touch_buffer = p[3];
+      virtual_Touch_buffer = (uint32_t*) (uint64_t) p[3];
       // RISC OS: ; On success, firmware should overwrite the address with zero
       p[3] = 0;
       break;
 
     case 0x00048020: // ARM2VC_Tag_SetVirtGPIOBuf I don't know what this is for!
-      virtual_GPIO_buffer = p[3];
+      virtual_GPIO_buffer = (uint32_t*) (uint64_t) p[3];
       // RISC OS: ; On success, firmware should overwrite the address with zero
       p[3] = 0;
       break;
@@ -1172,7 +1070,7 @@ zp[3] = 0xeafffffe;
 */
     //asm ( "mov x4, %[a]\nsvc 10" : : [a] "r" (physical_address_of_mapped_NS_memory( 0xfc080000 )) );
 }
-static stop_count = 0;
+static uint32_t stop_count = 0;
 if (++stop_count == 100000 || pc == 0xffff000c) {
     stop_count = 0;
     show_state();
@@ -1229,7 +1127,7 @@ static void bcm_2835_system_timer_access( bool is_write, int register_index, uin
     int n = (offset >> 4) & 3;
     if (is_write) {
       system_timer.compare[n] = get_partner_register( register_index );
-if (system_timer.compare[n] < system_timer.counter & 0xffffffff) {
+if (system_timer.compare[n] < (system_timer.counter & 0xffffffff)) {
 // FIXME!
 system_timer.compare[n] = system_timer.counter + 2500;
 }
@@ -1319,7 +1217,7 @@ if (y >= 1000) y -= 398;
           // Clear FIFO and read from set address
           switch (BSC[device].Slave_Address) {
           case 0x68: // ???
-            data = "Hello world";
+            data = (uint8_t*) "Hello world";
             break;
           default: asm ( "brk 1" );
           }
@@ -2008,23 +1906,6 @@ void entry()
     while (sdcard_thread == 0) { yield(); }
 
     uint64_t next_pc = 0;
-
-// These should be the undef and Prefetch abort 
-// set_block( 0x10044, 0x5000 ); // << This happens! But is it simply lazy address mapping?
-//set_block( 0x1004c, 0x5001 );
-//set_block( 0x18060, 0x5002 );
-//  stage2_data_abort still needed, for tag interface called by HAL_Init.
-// InitDynamicAreas, 0x1b6ac
-set_block( 0x283b8, 0x5003 ); // After InitDynamicAreas, before creating RMA
-set_block( 0x283ec, 0x5004 ); // Screen
-set_block( 0x28408, 0x5005 ); // About to clamp screen size
-set_block( 0x1b780, 0x5006 ); //    mov     r3, #1024   InitDynamicAreas, about to ClaimSysHeapNode
-set_block( 0x1b78c, 0x5007 ); //    mov     r3, #0      InitDynamicAreas, about to DynArea_OHinit_loop
-set_block( 0x1b730, 0x5008 ); //    mov     r2, #128    InitDynamicAreas, after first CreateChocolateBlockArray
-set_block( 0x18058, 0x5009 ); //    mov     r0, #2      ClaimSysHeapNode
-set_block( 0x18090, 0x500a ); //    mov     r5, #0x30000000 ClaimSysHeapNode extend block
-set_block( 0x180ec, 0x500b ); //    ClaimSysHeapNode extend block failed
-
     for (;;) {
       next_pc = switch_to_partner( vm_handler, next_pc );
     }
