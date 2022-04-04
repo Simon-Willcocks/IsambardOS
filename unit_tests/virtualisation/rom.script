@@ -1,0 +1,37 @@
+/* Copyright 2021 Simon Willcocks
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+
+ENTRY( _start )
+SECTIONS
+{
+  minimum_ram = 256 << 20 ; /* Boot configuration. */
+
+  va_base = 0xfc000000 ;
+
+ . = va_base ;
+ .text : {
+  *(.text.init) ;
+  . = ALIGN( 1024 ) ; /* Space for GPU to overwrite */
+  *(.data) ; /* Pre-MMU data, not writable once kernel started. */
+  *(.text) ;
+  *(.rodata*) ;
+  . = ALIGN( 4096 ) ;
+  *(.modules.data*) ;
+  rom_size = . - va_base ;
+ }
+
+ /DISCARD/ : { *(.*) ; }
+} ;

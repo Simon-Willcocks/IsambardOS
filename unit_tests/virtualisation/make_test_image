@@ -1,0 +1,10 @@
+#! /bin/bash -
+
+# Generate a bootable ARM32 ROM image for virtualisation testing with QEMU
+# driver/riscos.c can read a real image off an SD card, but that hardware
+# doesn't seem to be supported by QEMU
+
+arm-linux-gnueabi-gcc-10 bare_metal_arm32.c -o bare_metal_arm32.elf -nostdlib -T rom.script &&
+arm-linux-gnueabi-objcopy -R .ignoring -O binary bare_metal_arm32.elf bare_metal_arm32.img &&
+arm-linux-gnueabi-objdump -x --disassemble-all bare_metal_arm32.elf > bare_metal_arm32.dump &&
+xxd -i bare_metal_arm32.img
