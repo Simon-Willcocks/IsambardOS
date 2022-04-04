@@ -1,0 +1,104 @@
+diff -rc orig/qemu-5.2.0/hw/arm/raspi.c qemu-5.2.0/hw/arm/raspi.c
+*** orig/qemu-5.2.0/hw/arm/raspi.c	2020-12-08 17:59:44.000000000 +0100
+--- qemu-5.2.0/hw/arm/raspi.c	2021-07-06 09:25:13.298373700 +0200
+***************
+*** 29,36 ****
+  #define SMPBOOT_ADDR    0x300 /* this should leave enough space for ATAGS */
+  #define MVBAR_ADDR      0x400 /* secure vectors */
+  #define BOARDSETUP_ADDR (MVBAR_ADDR + 0x20) /* board setup code */
+! #define FIRMWARE_ADDR_2 0x8000 /* Pi 2 loads kernel.img here by default */
+! #define FIRMWARE_ADDR_3 0x80000 /* Pi 3 loads kernel.img here by default */
+  #define SPINTABLE_ADDR  0xd8 /* Pi 3 bootloader spintable */
+  
+  /* Registered machine type (matches RPi Foundation bootloader and U-Boot) */
+--- 29,37 ----
+  #define SMPBOOT_ADDR    0x300 /* this should leave enough space for ATAGS */
+  #define MVBAR_ADDR      0x400 /* secure vectors */
+  #define BOARDSETUP_ADDR (MVBAR_ADDR + 0x20) /* board setup code */
+! #define FIRMWARE_ADDR_2 0 /* x8000 /* Pi 2 loads kernel.img here by default */
+! #define FIRMWARE_ADDR_3 0 /* 0x80000 /* Pi 3 loads kernel.img here by default - I don't want the default! */
+! 
+  #define SPINTABLE_ADDR  0xd8 /* Pi 3 bootloader spintable */
+  
+  /* Registered machine type (matches RPi Foundation bootloader and U-Boot) */
+diff -rc orig/qemu-5.2.0/hw/display/bcm2835_fb.c qemu-5.2.0/hw/display/bcm2835_fb.c
+*** orig/qemu-5.2.0/hw/display/bcm2835_fb.c	2020-12-08 17:59:44.000000000 +0100
+--- qemu-5.2.0/hw/display/bcm2835_fb.c	2021-02-23 12:07:13.322304600 +0100
+***************
+*** 36,42 ****
+  #include "qemu/module.h"
+  
+  #define DEFAULT_VCRAM_SIZE 0x4000000
+! #define BCM2835_FB_OFFSET  0x00100000
+  
+  /* Maximum permitted framebuffer size; experimentally determined on an rpi2 */
+  #define XRES_MAX 3840
+--- 36,42 ----
+  #include "qemu/module.h"
+  
+  #define DEFAULT_VCRAM_SIZE 0x4000000
+! #define BCM2835_FB_OFFSET  0x00200000
+  
+  /* Maximum permitted framebuffer size; experimentally determined on an rpi2 */
+  #define XRES_MAX 3840
+diff -rc orig/qemu-5.2.0/hw/misc/bcm2835_property.c qemu-5.2.0/hw/misc/bcm2835_property.c
+*** orig/qemu-5.2.0/hw/misc/bcm2835_property.c	2020-12-08 17:59:44.000000000 +0100
+--- qemu-5.2.0/hw/misc/bcm2835_property.c	2021-03-25 16:42:20.846973500 +0100
+***************
+*** 28,33 ****
+--- 28,34 ----
+      uint32_t tmp;
+      int n;
+      uint32_t offset, length, color;
++     uint32_t location_for_new_buffer_size = 0;
+  
+      /*
+       * Copy the current state of the framebuffer config; we will update
+***************
+*** 99,104 ****
+--- 100,112 ----
+              stl_le_phys(&s->dma_as, value + 16, (tmp & 1));
+              resplen = 8;
+              break;
++         case 0x00020002: /* Get timing */
++             /* Assume that whatever device they asked for exists,
++              * and we'll just say it takes 1.5ms to power up.
++              */
++             stl_le_phys(&s->dma_as, value + 16, 1500);
++             resplen = 8;
++             break;
+  
+          /* Clocks */
+  
+***************
+*** 156,163 ****
+  
+          case 0x00040001: /* Allocate buffer */
+              stl_le_phys(&s->dma_as, value + 12, fbconfig.base);
+!             stl_le_phys(&s->dma_as, value + 16,
+!                         bcm2835_fb_get_size(&fbconfig));
+              resplen = 8;
+              break;
+          case 0x00048001: /* Release buffer */
+--- 164,171 ----
+  
+          case 0x00040001: /* Allocate buffer */
+              stl_le_phys(&s->dma_as, value + 12, fbconfig.base);
+! 	    // We can't write this yet, the size may not be known
+!             location_for_new_buffer_size = value + 16;
+              resplen = 8;
+              break;
+          case 0x00048001: /* Release buffer */
+***************
+*** 299,304 ****
+--- 307,316 ----
+      if (fbconfig_updated) {
+          bcm2835_fb_reconfigure(s->fbdev, &fbconfig);
+      }
++     if (location_for_new_buffer_size != 0) {
++         stl_le_phys(&s->dma_as, location_for_new_buffer_size,
++                         bcm2835_fb_get_size(&fbconfig));
++     }
+  
+      /* Buffer response code */
+      stl_le_phys(&s->dma_as, s->addr + 4, (1 << 31));
