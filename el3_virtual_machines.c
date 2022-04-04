@@ -482,12 +482,6 @@ for (int i = 0; i < 4; i++)
     "\n  ldp x2, x3, [x0, #%[pc]] // Includes never-used gate value" \
     "\n  msr elr_el3, x2" \
     "\n  msr spsr_el3, x3" \
-"\n  tbz x3, #21, 1f" \
-"\n  // Set Single Step" \
-"\n  mrs x3, mdscr_el1" \
-"\n  orr x3, x3, #1" \
-"\n  msr mdscr_el1, x3" \
-"\n1:" \
     "\n b resume_ns_thread" \
     "\n  eret" \
     : : \
