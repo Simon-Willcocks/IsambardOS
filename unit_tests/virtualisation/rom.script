@@ -1,4 +1,4 @@
-/* Copyright 2021 Simon Willcocks
+/* Copyright 2021-2022 Simon Willcocks
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+/* This file will need modifying if the MMU gets enabled */
 
 ENTRY( _start )
 SECTIONS
@@ -24,12 +25,9 @@ SECTIONS
  . = va_base ;
  .text : {
   *(.text.init) ;
-  . = ALIGN( 1024 ) ; /* Space for GPU to overwrite */
-  *(.data) ; /* Pre-MMU data, not writable once kernel started. */
   *(.text) ;
   *(.rodata*) ;
-  . = ALIGN( 4096 ) ;
-  *(.modules.data*) ;
+  *(.data) ;
   rom_size = . - va_base ;
  }
 
