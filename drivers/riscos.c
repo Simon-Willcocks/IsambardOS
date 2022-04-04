@@ -141,9 +141,10 @@ static void set_block( uint32_t addr, int code )
 
 static bool image_is_valid()
 {
-#ifndef QEMU
+#ifdef QEMU
+static const // Make the array from the xxd generated header file rodata:
 #include "arm32_code.h"
-  const unsigned char* d = (void*) (ro_address.r + rom_load.r);
+  unsigned char* d = (void*) (ro_address.r + rom_load.r);
   progress( __LINE__ );
 
   for (uint32_t i = 0; i < bare_metal_arm32_img_len; i++) {
