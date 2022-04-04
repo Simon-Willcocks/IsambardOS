@@ -16,6 +16,8 @@
 /* This is a portion of the RISC OS C kernel I've been working on, intended
  * to allow testing of the virtualisation code under QEMU.
  *
+ * It's simplified, and expects to be loaded into RAM at 0.
+ *
  * QEMU needs to have some small modifications made to it, see ../../QEMU
  */
 
@@ -75,7 +77,6 @@ static const uint32_t top_of_ram = (uint32_t) &minimum_ram;
 extern int rom_size;
 static const uint32_t size_of_rom = (uint32_t) &rom_size; // 5 << 20;
 
-static uint32_t relocate_as_necessary( uint32_t start, volatile startup *startup );
 uint32_t pre_mmu_allocate_physical_memory( uint32_t size, uint32_t alignment, volatile startup *startup );
 
 void __attribute__(( naked )) locate_rom_and_enter_kernel( uint32_t start );
@@ -99,8 +100,6 @@ void __attribute__(( naked )) locate_rom_and_enter_kernel( uint32_t start )
 
   uint32_t core_number = get_core_number();
 
-for (;;) {}
-
   uint32_t volatile *states = (uint32_t*) (top_of_ram / 2); // Assumes top_of_ram > 2 * size_of_rom
   uint32_t max_cores = 0;
 
@@ -119,8 +118,6 @@ for (;;) {}
 
     wait_for_cores_to_reach( states, max_cores, CORES_AT_BOOT_START );
 
-    startup->relocation_offset = relocate_as_necessary( start, startup );
-
     // Other cores are blocked, waiting for the old location of states[0] to change)
     // Release them before starting to work with the potentially new location
     release_from_checkpoint( states, CORES_AT_BOOT_START );
@@ -132,27 +129,9 @@ for (;;) {}
     at_checkpoint( states, core_number, CORES_AT_BOOT_START );
   }
 
-  if (startup->relocation_offset != 0) {
-    uint32_t relocated_startup = startup->relocation_offset + (uint32_t) startup;
-
-    asm goto (
-        "\n  adr lr, %l[relocated]"
-        "\n  add lr, lr, %[offset]"
-        "\n  mov pc, lr"
-
-        : 
-        : [offset] "r" (startup->relocation_offset)
-        :
-        : relocated );
-relocated:
-    startup = (volatile void*) relocated_startup;
-  }
-
   uint32_t core_workspace_space = (sizeof( core_workspace ) + 0xfff) & ~0xfff;
 
   if (core_number == 0) {
-    // OK, now running in this routine at the potentially new location
-
     uint32_t space_needed = (core_workspace_space * max_cores);
 
     while (space_needed >= startup->ram_blocks[0].size) { asm( "wfi" ); } // This is never going to happen
@@ -188,7 +167,7 @@ relocated:
 
     asm ( "  mov sp, %[stack]" : : [stack] "r" (sizeof( ws->kernel.svc_stack ) + (uint32_t) &ws->kernel.svc_stack) );
 
-    for (;;) {asm ( "smc 0x8765" ); }
+    for (;;) {asm ( "smc 5" ); }
   }
 
   __builtin_unreachable();
@@ -203,56 +182,6 @@ static void copy(void *dest, const void *src, size_t n)
   for (n = n / sizeof( uint32_t ); n > 0; n--) {
     *d++ = *s++;
   }
-}
-
-
-static uint32_t __attribute__(( noinline )) relocate_as_necessary( uint32_t start, volatile startup *startup )
-{
-  // No MMU, no cache, small stack available.
-
-  startup->final_location = start;
-
-  if (!naturally_aligned( start )) {
-    // Needs relocating to somewhere, put it to top or bottom of RAM,
-    // whichever doesn't overlap with the current location
-
-    if (start < size_of_rom) // Can't go to bottom of memory (source and destination overlap)
-      startup->final_location = top_of_ram - size_of_rom; // Top, instead
-    else
-      startup->final_location = 0;
-  }
-
-  // Physical location of (copy of) the ROM is either at 0, its original
-  // location, or top of ram. Whichever, it is "naturally" aligned (so the MMU
-  // can map it easily in large chunks).
-
-  int free_block = 0;
-  // If the final location is at the top or bottom of memory, there will be
-  // one initial block of free memory, if it's still in the middle, there will
-  // be two.
-
-  if (startup->final_location > 0) {
-    startup->ram_blocks[free_block].base = 0;
-    startup->ram_blocks[free_block].size = startup->final_location;
-    free_block++;
-  }
-
-  if (startup->final_location + size_of_rom < top_of_ram) {
-    startup->ram_blocks[free_block].base = startup->final_location + size_of_rom;
-    startup->ram_blocks[free_block].size = top_of_ram - startup->ram_blocks[free_block].base;
-    free_block++;
-  }
-
-  // May add further blocks of RAM, here, but it's better to do it once the kernel is running.
-
-  // Now entries in startup structure (stored in the "ROM" image) have been finalised, we can copy
-  // the whole lot to the new location ready to be jumped to.
-
-  if (startup->final_location != start) {
-    copy( (void*) startup->final_location, (const void*) start, size_of_rom );
-  }
-
-  return startup->final_location - start;
 }
 
 // Currently only copes with two alignments/sizes, probably good enough...
