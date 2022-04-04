@@ -11,6 +11,9 @@ if [ ! -e tools/interfaces -o tools/interfaces.c -nt tools/interfaces ] ; then
 fi
 
 rm -f kernel8.dump kernel8.elf sdfat/kernel8.img built_drivers/* include/interfaces/client/* include/interfaces/provider/*
+rm -f include/interfaces
+mkdir -p include/interfaces/{client,provider}
+mkdir built_drivers
 
 (
   cd interfaces
