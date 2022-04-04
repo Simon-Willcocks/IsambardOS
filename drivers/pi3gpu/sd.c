@@ -855,7 +855,6 @@ void EMMC__BLOCK_DEVICE__read_4k_pages( EMMC o, PHYSICAL_MEMORY_BLOCK dest, NUMB
     EMMC__exception( 0 ); // name_code( "Memory not writable" ) );
   }
 
-#ifndef QEMU
   uint32_t size = PHYSICAL_MEMORY_BLOCK__size( dest ).r;
   uint32_t start_pa = PHYSICAL_MEMORY_BLOCK__physical_address( dest ).r;
   data_thread = this_thread;
@@ -921,16 +920,6 @@ if ((request[5] & 1) == 0) {
   command( 18, first_block.r );
 
   wait_until_woken(); // As data thread.
-#else
-#include "arm32_code.h"
-  static const NUMBER ro_address = { .r = 0x8000000 };
-  DRIVER_SYSTEM__map_at( driver_system(), dest, ro_address );
-  uint8_t *d = (void*) ro_address.r;
-
-  for (uint32_t i = 0; i < bare_metal_arm32_img_len; i++) {
-    d[i] = bare_metal_arm32_img[i];
-  }
-#endif
 
   EMMC__BLOCK_DEVICE__read_4k_pages__return();
 }

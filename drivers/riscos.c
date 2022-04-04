@@ -34,6 +34,11 @@ ISAMBARD_INTERFACE( TRIVIAL_NUMERIC_DISPLAY )
 
 TRIVIAL_NUMERIC_DISPLAY tnd = {};
 
+static void progress( int p )
+{
+  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 10 ), N( p ), N( 0xffff8080 ) );
+}
+
 void show_state()
 {
   for (int i = 0; i < 34; i++) {
@@ -45,8 +50,11 @@ void show_state()
 
 static void load_guest_os( PHYSICAL_MEMORY_BLOCK riscos_memory )
 {
+#ifndef QEMU
   PHYSICAL_MEMORY_BLOCK rom_memory;
   rom_memory = PHYSICAL_MEMORY_BLOCK__subblock( riscos_memory, rom_load, rom_size );
+
+  progress( __LINE__ );
 
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 910 ), PHYSICAL_MEMORY_BLOCK__physical_address( rom_memory ), N( 0xff0000ff ) );
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 10 ), N( 0x12121212 ), N( 0xfffff0f0 ) );
@@ -54,7 +62,11 @@ static void load_guest_os( PHYSICAL_MEMORY_BLOCK riscos_memory )
   NUMBER timer0 = DRIVER_SYSTEM__get_ms_timer_ticks( driver_system() );
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 100 ), ( timer0 ), N( 0xfffff0f0 ) );
 
+  progress( __LINE__ );
+
   BLOCK_DEVICE emmc = BLOCK_DEVICE__get_service( "EMMC", -1 );
+
+  progress( __LINE__ );
 
   BLOCK_DEVICE__read_4k_pages( emmc, PHYSICAL_MEMORY_BLOCK__duplicate_to_pass_to( emmc.r, rom_memory ), disc_address );
 
@@ -63,6 +75,9 @@ static void load_guest_os( PHYSICAL_MEMORY_BLOCK riscos_memory )
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 120 ), N( timer1.r - timer0.r ), N( 0xfffff0f0 ) );
 
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 10 ), N( 0x13131313 ), N( 0xfffff0f0 ) );
+
+  progress( __LINE__ );
+#endif
 }
 
 static uint32_t software_crc32( const uint8_t *p, uint32_t len )
@@ -126,6 +141,18 @@ static void set_block( uint32_t addr, int code )
 
 static bool image_is_valid()
 {
+#ifndef QEMU
+#include "arm32_code.h"
+  const unsigned char* d = (void*) (ro_address.r + rom_load.r);
+  progress( __LINE__ );
+
+  for (uint32_t i = 0; i < bare_metal_arm32_img_len; i++) {
+    d[i] = bare_metal_arm32_img[i];
+  }
+  progress( __LINE__ );
+  return true;
+#else
+
   uint32_t crc;
   const unsigned char* rom_base = (void*) (ro_address.r + rom_load.r);
 
@@ -157,6 +184,7 @@ static bool image_is_valid()
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 180 ), N( top - 10 ), NUMBER__from_integer_register( crc ), N( 0xffffffff ) );
 
   return true; // The ROM is likely to change, keep going anyway
+#endif
 }
 
 static struct {
@@ -1830,7 +1858,6 @@ void map_page( uint64_t physical, void *virtual )
   DRIVER_SYSTEM__map_at( driver_system(), device_page, NUMBER__from_integer_register( (integer_register) virtual ) );
 }
 
-
 void entry()
 {
   // Give RISC OS control over the BSC interface
@@ -1838,20 +1865,28 @@ void entry()
 
   tnd = TRIVIAL_NUMERIC_DISPLAY__get_service( "Trivial Numeric Display", -1 );
 
+  progress( __LINE__ );
+
   riscos_memory = SYSTEM__allocate_memory( system, riscos_ram_size );
   if (riscos_memory.r == 0) {
     asm ( "brk 2" );
   }
 
+  progress( __LINE__ );
   load_guest_os( riscos_memory );
+  progress( __LINE__ );
 
   DRIVER_SYSTEM__map_at( driver_system(), riscos_memory, ro_address );
+  progress( __LINE__ );
 
   if (image_is_valid()) {
+    progress( __LINE__ );
     // Establish a translation table mapping the VM "physical" addresses to real memory
     static const NUMBER tt_size = { .r = 4096 };
     PHYSICAL_MEMORY_BLOCK el2_tt = SYSTEM__allocate_memory( system, tt_size );
     DRIVER_SYSTEM__map_at( driver_system(), el2_tt, el2_tt_address );
+
+    progress( __LINE__ );
 
     vm_memory_base = PHYSICAL_MEMORY_BLOCK__physical_address( riscos_memory ).r;
 
@@ -1859,6 +1894,8 @@ void entry()
     for (int i = 0; i < 512; i++) {
       tt[i] = Aarch64_VMSA_invalid;
     }
+
+    progress( __LINE__ );
 
     for (int i = 0; i < 32; i++) {
       Aarch64_VMSA_entry entry = Aarch64_VMSA_block_at( vm_memory_base + (i << 21) );
@@ -1871,7 +1908,10 @@ void entry()
         asm volatile ( "dc civac, %[va]" : : [va] "r" (&tt[i & ~1]) );
       }
     }
+    progress( __LINE__ );
+
     DRIVER_SYSTEM__make_partner_thread( driver_system(), PHYSICAL_MEMORY_BLOCK__duplicate_to_pass_to( driver_system().r, el2_tt ) );
+    progress( __LINE__ );
 
     uint64_t hcr2 = 0b0001110000000000000011111110110000111011;
     // uint64_t hcr2 = 0b100 0001 1100 0000 0000 0000 1111 1110 1100 0011 1011;
@@ -1906,8 +1946,10 @@ void entry()
     while (sdcard_thread == 0) { yield(); }
 
     uint64_t next_pc = 0;
+    progress( __LINE__ );
     for (;;) {
       next_pc = switch_to_partner( vm_handler, next_pc );
+      progress( __LINE__ );
     }
   }
 }
