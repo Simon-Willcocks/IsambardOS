@@ -1954,6 +1954,9 @@ void entry()
 
     uint64_t next_pc = 0;
     progress( __LINE__ );
+
+    set_vm_system_register( HCR_EL2, hcr2 | (1 << 7) ); // Raise IRQ (enabled by bit 4, above)
+
     for (;;) {
       next_pc = switch_to_partner( vm_handler, next_pc );
       progress( __LINE__ );

@@ -81,6 +81,8 @@ uint32_t pre_mmu_allocate_physical_memory( uint32_t size, uint32_t alignment, vo
 
 void __attribute__(( noinline, noreturn )) pre_mmu_core_with_stack( core_workspace *ws )
 {
+  asm ( "cpsie i" ); // Enable interrupts
+
   for (;;) {asm ( "hvc 15" ); }
 
   __builtin_unreachable();
