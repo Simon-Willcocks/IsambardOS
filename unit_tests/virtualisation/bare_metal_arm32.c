@@ -34,7 +34,7 @@ typedef struct shared_workspace {
 typedef struct core_workspace {
   uint64_t core_number;
   struct {
-    uint64_t svc_stack[511];
+    uint64_t svc_stack[511]; // Must be final element in structure
   } kernel;
 } core_workspace;
 
@@ -79,33 +79,22 @@ static const uint32_t size_of_rom = (uint32_t) &rom_size; // 5 << 20;
 
 uint32_t pre_mmu_allocate_physical_memory( uint32_t size, uint32_t alignment, volatile startup *startup );
 
-void __attribute__(( naked )) locate_rom_and_enter_kernel( uint32_t start );
-
-// The whole point of this routine is to be linked at the start of the execuable, and
-// to pass the actual location of the first byte of the loaded "ROM" to the next
-// routine.
-void __attribute__(( naked, section( ".text.init" ), noinline )) _start()
+void __attribute__(( noinline, noreturn )) pre_mmu_core_with_stack( core_workspace *ws )
 {
-  register uint32_t start asm( "r0" );
+  for (;;) {asm ( "hvc 15" ); }
 
-  asm ( "adr %[loc], _start" : [loc] "=r" (start) ); // Guaranteed PC relative
-
-  locate_rom_and_enter_kernel( start );
-  asm ( ".align 12" ); // GPU writes over the loaded code...
+  __builtin_unreachable();
 }
 
-void __attribute__(( naked )) locate_rom_and_enter_kernel( uint32_t start )
+void _start();
+
+void __attribute__(( noreturn )) locate_rom_and_enter_kernel( uint32_t start, uint32_t core_number, uint32_t volatile *states )
 {
   volatile startup *startup = (void*) (((uint8_t*) &boot_data) - ((uint8_t*) _start) + start);
 
-  uint32_t core_number = get_core_number();
-
-  uint32_t volatile *states = (uint32_t*) (top_of_ram / 2); // Assumes top_of_ram > 2 * size_of_rom
   uint32_t max_cores = 0;
 
   if (core_number == 0) {
-    asm volatile( "mov sp, %[stack]" : : [stack] "r" (states) );
-
     startup->ram_blocks[0].base = size_of_rom;
     startup->ram_blocks[0].size = top_of_ram - startup->ram_blocks[0].base;
 
@@ -132,7 +121,7 @@ void __attribute__(( naked )) locate_rom_and_enter_kernel( uint32_t start )
     at_checkpoint( states, core_number, CORES_AT_BOOT_START );
   }
 
-  uint32_t core_workspace_space = (sizeof( core_workspace ) + 0xfff) & ~0xfff;
+  uint32_t const core_workspace_space = (sizeof( core_workspace ) + 0xfff) & ~0xfff;
 
   if (core_number == 0) {
     uint32_t space_needed = (core_workspace_space * max_cores);
@@ -145,7 +134,7 @@ void __attribute__(( naked )) locate_rom_and_enter_kernel( uint32_t start )
 
     {
       uint32_t *p = (void*) startup->shared_memory;
-      for (int i = 0; i < sizeof( shared_workspace ) / 4; i++) {
+      for (int i = 0; i < sizeof( shared_workspace ) / sizeof( *p ); i++) {
         p[i] = 0;
       }
     }
@@ -159,32 +148,52 @@ void __attribute__(( naked )) locate_rom_and_enter_kernel( uint32_t start )
     at_checkpoint( states, core_number, CORES_RUNNING_AT_NEW_LOCATION );
   }
 
-  {
-    // Clear out workspaces (in parallel)
-    core_workspace *ws = (void*) (startup->core_workspaces + core_number * core_workspace_space);
-    uint32_t *p = (uint32_t *) ws;
-    for (int i = 0; i < core_workspace_space/sizeof( uint32_t ); i++) {
-      p[i] = 0;
-    }
-    ws->core_number = core_number;
+  core_workspace *ws = (void*) (startup->core_workspaces + core_number * core_workspace_space);
 
-    asm ( "  mov sp, %[stack]" : : [stack] "r" (sizeof( ws->kernel.svc_stack ) + (uint32_t) &ws->kernel.svc_stack) );
+  asm ( "  mov sp, %[stack]" : : [stack] "r" ((&ws->kernel)+1) );
 
-    for (;;) {asm ( "smc 5" ); }
+  // Clear out workspace (in parallel)
+  uint64_t *p = (void *) ws;
+  while (p < &ws->kernel.svc_stack[0]) { // Don't clobber the stack, even if it's not used yet.
+    *p++ = 0;
   }
+  ws->core_number = core_number;
+
+  pre_mmu_core_with_stack( ws );
 
   __builtin_unreachable();
 }
 
-static void copy(void *dest, const void *src, size_t n)
+// The whole point of this routine is to be linked at the start of the execuable, and
+// to pass the actual location of the first byte of the loaded "ROM" to the next
+// routine.
+void __attribute__(( naked, section( ".text.init" ), noinline )) _start()
 {
-  uint32_t *d = dest;
-  const uint32_t *s = src;
-  
-  // No check for alignment or non-word size
-  for (n = n / sizeof( uint32_t ); n > 0; n--) {
-    *d++ = *s++;
-  }
+  register uint32_t start asm( "r0" );
+
+  asm ( "b 0f"
+    "\n  hvc #1"
+    "\n  hvc #2"
+    "\n  hvc #3"
+    "\n  hvc #4"
+    "\n  hvc #5"
+    "\n  hvc #6"
+    "\n  hvc #7"
+    "\n0:" );
+
+  asm ( "adr %[loc], _start" : [loc] "=r" (start) ); // Guaranteed PC relative
+
+  uint32_t core_number = get_core_number();
+
+  // Assumes top_of_ram > 2 * size_of_rom and that the ROM
+  // is loaded near the top or bottom of RAM.
+  uint32_t volatile *states = (uint32_t*) (top_of_ram / 2);
+  uint32_t const tiny_stack_size = 256;
+
+  // Allocate a tiny stack per core in RAM that is currently unused.
+  asm volatile( "mov sp, %[stack]" : : [stack] "r" (states - core_number * tiny_stack_size) );
+
+  locate_rom_and_enter_kernel( start, core_number, states );
 }
 
 // Currently only copes with two alignments/sizes, probably good enough...
