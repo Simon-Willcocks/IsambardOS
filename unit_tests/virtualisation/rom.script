@@ -18,9 +18,9 @@
 ENTRY( _start )
 SECTIONS
 {
-  minimum_ram = 256 << 20 ; /* Boot configuration. */
+  minimum_ram = 64 << 20 ; /* Match drivers/riscos.c riscos_ram_size. */
 
-  va_base = 0xfc000000 ;
+  va_base = 0 ;
 
  . = va_base ;
  .text : {

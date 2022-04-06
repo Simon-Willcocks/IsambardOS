@@ -106,6 +106,9 @@ void __attribute__(( naked )) locate_rom_and_enter_kernel( uint32_t start )
   if (core_number == 0) {
     asm volatile( "mov sp, %[stack]" : : [stack] "r" (states) );
 
+    startup->ram_blocks[0].base = size_of_rom;
+    startup->ram_blocks[0].size = top_of_ram - startup->ram_blocks[0].base;
+
     // Identify the kind of processor we're working with.
     // The overall system (onna chip) will be established later.
     max_cores = pre_mmu_identify_processor();

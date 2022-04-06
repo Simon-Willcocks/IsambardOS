@@ -414,6 +414,9 @@ static bool show;
 
 static void cp15_access( uint32_t syndrome )
 {
+  // A lot of this should be implemented in hardware, via virtual registers,
+  // but this seems the easier approach for now. (There's bits to set to say
+  // which accesses get trapped.)
   copro_syndrome cp = { .raw = syndrome };
 /*
 if ((syndrome & 0xffc1e) != 0x41c14
@@ -512,6 +515,9 @@ asm ( "svc 0" );
   case 0x60004: READ_ONLY( 0x01102131 ); break; // ID_ISAR3, Instruction Set Attribute Register 3
   case 0x80004: READ_ONLY( 0x00000141 ); break; // ID_ISAR4, Instruction Set Attribute Register 4
   case 0xa0004: READ_ONLY( 0x00000000 ); break; // ID_ISAR5, Instruction Set Attribute Register 5 - not in ARM11? - not in ARM11?
+
+  case 0x46400: READ_ONLY( 0x00000000 ); break; // L2CTLR (used for number of cores: return 1 FIXME)
+
   default: asm ( "brk 65" );
   }
 asm ( "svc 0" );
