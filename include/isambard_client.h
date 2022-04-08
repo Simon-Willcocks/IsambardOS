@@ -274,6 +274,23 @@ extern uint64_t switch_to_partner( vm handler, uint64_t pc );
 extern uint64_t get_partner_register( int code );
 extern void set_partner_register( int code, uint64_t value );
 
-typedef enum { CNTKCTL_EL1, CSSELR_EL1, MAIR_EL1, SCTLR_EL1, TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1, ACTLR_EL1, FPEXC32_EL2, ESR_EL1, FAR_EL1, VTTBR_EL2, HCR_EL2, HSTR_EL2, VMPIDR_EL2, VPIDR_EL2, VTCR_EL2, DACR32_EL2, CONTEXTIDR_EL1 } vm_system_register;
-extern void set_vm_system_register( vm_system_register reg, uint32_t v );
-extern uint32_t get_vm_system_register( vm_system_register reg );
+typedef enum { CNTKCTL_EL1, CSSELR_EL1, MAIR_EL1, SCTLR_EL1, TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1, ACTLR_EL1, FPEXC32_EL2, ESR_EL1, FAR_EL1, VTTBR_EL2, HCR_EL2, HSTR_EL2, VMPIDR_EL2, VPIDR_EL2, VTCR_EL2, DACR32_EL2, CONTEXTIDR_EL1, VM_REGISTER_OUT_OF_RANGE } vm_system_register;
+
+// Read-modify-write the register, new_value = ((old_value & and_bits) ^ xor_bits)
+// Returns the old value, before any changes were made
+// e.g. To set bit 7, change_vm_system_register( reg, ~(1 << 7), (1 << 7) );
+// e.g. To clear bit 7, change_vm_system_register( reg, ~(1 << 7), 0 );
+extern uint64_t change_vm_system_register( vm_system_register reg, uint64_t xor_bits, uint64_t and_bits );
+
+static inline void set_vm_system_register( vm_system_register reg, uint64_t v )
+{
+  // Replace old value
+  change_vm_system_register( reg, v, 0 );
+}
+
+static inline uint64_t get_vm_system_register( vm_system_register reg )
+{
+  // Read value with no modification.
+  return change_vm_system_register( reg, 0, 0xffffffff );
+}
+

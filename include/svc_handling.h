@@ -651,36 +651,35 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
       }
     }
     return result;
-  case ISAMBARD_SET_VM_SYSTEM_REGISTER:
+  case ISAMBARD_CHANGE_VM_SYSTEM_REGISTER:
     {
+#define VM_REGISTER_OUT_OF_RANGE 20
+
+/* This might be called by a thread other than the VM thread.
       thread_context *partner = thread->partner;
       if (partner == 0) BSOD( __COUNTER__ );
       if (thread->current_map != partner->current_map) BSOD( __COUNTER__ );
-
+*/
       unsigned int register_index = thread->regs[0];
-      if (register_index >= 20) BSOD( __COUNTER__ );
+      if (register_index >= VM_REGISTER_OUT_OF_RANGE) BSOD( __COUNTER__ );
 
       uint64_t *sysregs = (void*) &vm[1]; // FIXME more than one vm!
 
       asm ( "dc civac, %[r]" : : [r] "r" (&sysregs[register_index]) );
-      sysregs[register_index] = thread->regs[1];
+      uint32_t old_value = 0;
+      uint32_t new_value = thread->regs[1];
+      if (thread->regs[2] != 0) {
+        // Read only if not ignoring all bits
+        old_value = sysregs[register_index];
+        new_value = new_value ^ (old_value & thread->regs[2]);
+      }
+      if (thread->regs[1] != 0 || thread->regs[2] != 0xffffffff) {
+        // Write only if something might have changed
+        sysregs[register_index] = new_value;
+      }
       asm ( "dsb sy\ndc cvac, %[r]" : : [r] "r" (&sysregs[register_index]) );
-    }
-    return result;
-  case ISAMBARD_GET_VM_SYSTEM_REGISTER:
-    {
-      thread_context *partner = thread->partner;
-      if (partner == 0) BSOD( __COUNTER__ );
-      if (thread->current_map != partner->current_map) BSOD( __COUNTER__ );
 
-      unsigned int register_index = thread->regs[0];
-      if (register_index >= 20) BSOD( __COUNTER__ ); // FIXME: 20 = number of system registers stored in vm_state
-
-      uint64_t *sysregs = (void*) &vm[1]; // FIXME more than one vm!
-
-      asm ( "dc civac, %[r]" : : [r] "r" (&sysregs[register_index]) );
       thread->regs[0] = sysregs[register_index];
-      asm ( "dsb sy\ndc cvac, %[r]" : : [r] "r" (&sysregs[register_index]) );
     }
     return result;
   case ISAMBARD_SYSTEM_REQUEST:

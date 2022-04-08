@@ -33,7 +33,11 @@ typedef struct shared_workspace {
 
 typedef struct core_workspace {
   uint64_t core_number;
+  uint32_t counter;
+  uint32_t irq_counter;
   struct {
+    // Ordering is essential
+    uint64_t irq_stack[64];
     uint64_t svc_stack[511]; // Must be final element in structure
   } kernel;
 } core_workspace;
@@ -79,11 +83,38 @@ static const uint32_t size_of_rom = (uint32_t) &rom_size; // 5 << 20;
 
 uint32_t pre_mmu_allocate_physical_memory( uint32_t size, uint32_t alignment, volatile startup *startup );
 
+core_workspace *workspace = 0; // Without enabling the MMU, globals and static locals are writable
+// Single core only, atm
+
+static void __attribute__(( noinline )) c_irq()
+{
+  register uint32_t interrupts asm( "r8" ) = ++workspace->irq_counter;
+  register uint32_t loops asm( "r7" ) = workspace->counter;
+
+  asm ( "hvc 14" : "=r" (loops), "=r" (interrupts) : "r" (loops), "r" (interrupts) );
+}
+
 void __attribute__(( noinline, noreturn )) pre_mmu_core_with_stack( core_workspace *ws )
 {
+  workspace = ws;
+
+  // svc_stack follows irq_stack
+  asm ( "msr sp_irq, %[stack]" : : [stack] "r" (&ws->kernel.svc_stack) );
   asm ( "cpsie i" ); // Enable interrupts
 
-  for (;;) {asm ( "hvc 15" ); }
+  uint32_t volatile *counter = &ws->counter;
+
+  for (;;) {
+    // Spend maybe half the time in the "guest OS"
+    register uint32_t loops asm( "r7" ) = *counter;
+    do {
+      ++*counter;
+      loops = *counter;
+    } while (0 != (*counter & 0xffffff));
+    // Switch to the hypervisor for the other half
+    register uint32_t interrupts asm( "r8" ) = workspace->irq_counter;
+    asm ( "hvc 15" : : "r" (loops), "r" (interrupts) );
+  }
 
   __builtin_unreachable();
 }
@@ -166,6 +197,19 @@ void __attribute__(( noreturn )) locate_rom_and_enter_kernel( uint32_t start, ui
   __builtin_unreachable();
 }
 
+
+void __attribute__(( naked )) irq()
+{
+  asm( "sub lr, lr, #4"
+   "\n  srsdb sp!, #0x12"
+   "\n  stmfd sp!, {r0-r3, r9, r12}" );
+
+  c_irq();
+
+  asm( "ldmfd sp!, {r0-r3, r9, r12}"
+   "\n  rfeia sp!" );
+}
+
 // The whole point of this routine is to be linked at the start of the execuable, and
 // to pass the actual location of the first byte of the loaded "ROM" to the next
 // routine.
@@ -179,7 +223,7 @@ void __attribute__(( naked, section( ".text.init" ), noinline )) _start()
     "\n  hvc #3"
     "\n  hvc #4"
     "\n  hvc #5"
-    "\n  hvc #6"
+    "\n  b irq"
     "\n  hvc #7"
     "\n0:" );
 

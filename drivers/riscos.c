@@ -2,8 +2,6 @@
 
 // Load RISCOS image from SD card, execute it in a Non-Secure environment.
 
-// #define QEMU test code fails, at the moment, better luck with RISC OS? Yes!
-
 #include "drivers.h"
 #include "aarch64_vmsa.h"
 #include "exclusive.h"
@@ -558,148 +556,6 @@ static void pointer_authentication( uint32_t syndrome ) { asm ( "brk 1" ); }
 static void cp14_access_RR( uint32_t syndrome ) { asm ( "brk 1" ); }
 static void illegal_execution_state( uint32_t syndrome ) { asm ( "brk 1" ); }
 
-/* This implements the HAL for RISC OS. */
-
-enum HAL {
-
-HAL_IRQEnable = 1,
-HAL_IRQDisable = 2,
-HAL_IRQClear = 3,
-HAL_IRQSource = 4,
-HAL_IRQStatus = 5,
-HAL_FIQEnable = 6,
-HAL_FIQDisable = 7,
-HAL_FIQDisableAll = 8,
-HAL_FIQClear = 9,
-HAL_FIQSource = 10,
-HAL_FIQStatus = 11,
-
-HAL_Timers = 12,
-HAL_TimerDevice = 13,
-HAL_TimerGranularity = 14,
-HAL_TimerMaxPeriod = 15,
-HAL_TimerSetPeriod = 16,
-HAL_TimerPeriod = 17,
-HAL_TimerReadCountdown = 18,
-
-HAL_CounterRate = 19,
-HAL_CounterPeriod = 20,
-HAL_CounterRead = 21,
-HAL_CounterDelay = 22,
-
-HAL_NVMemoryType = 23,
-HAL_NVMemorySize = 24,
-HAL_NVMemoryPageSize = 25,
-HAL_NVMemoryProtectedSize = 26,
-HAL_NVMemoryProtection = 27,
-HAL_NVMemoryIICAddress = 28,
-HAL_NVMemoryRead = 29,
-HAL_NVMemoryWrite = 30,
-
-HAL_IICBuses = 31,
-HAL_IICType = 32,
-HAL_IICSetLines = 33,
-HAL_IICReadLines = 34,
-HAL_IICDevice = 35,
-HAL_IICTransfer = 36,
-HAL_IICMonitorTransfer = 37,
-
-HAL_VideoFlybackDevice = 38,
-HAL_VideoSetMode = 39,
-HAL_VideoWritePaletteEntry = 40,
-HAL_VideoWritePaletteEntries = 41,
-HAL_VideoReadPaletteEntry = 42,
-HAL_VideoSetInterlace = 43,
-HAL_VideoSetBlank = 44,
-HAL_VideoSetPowerSave = 45,
-HAL_VideoUpdatePointer = 46,
-HAL_VideoSetDAG = 47,
-HAL_VideoVetMode = 48,
-HAL_VideoPixelFormats = 49,
-HAL_VideoFeatures = 50,
-HAL_VideoBufferAlignment = 51,
-HAL_VideoOutputFormat = 52,
-
-HAL_IRQProperties = 53,
-HAL_IRQSetCores = 54,
-HAL_IRQGetCores = 55,
-HAL_CPUCount = 56,
-HAL_CPUNumber = 57,
-HAL_SMPStartup = 58,
-
-HAL_MachineID = 59,
-HAL_ControllerAddress = 60,
-HAL_HardwareInfo = 61,
-HAL_SuperIOInfo = 62,
-HAL_PlatformInfo = 63,
-HAL_CleanerSpace = 64,
-
-HAL_UARTPorts = 65,
-HAL_UARTStartUp = 66,
-HAL_UARTShutdown = 67,
-HAL_UARTFeatures = 68,
-HAL_UARTReceiveByte = 69,
-HAL_UARTTransmitByte = 70,
-HAL_UARTLineStatus = 71,
-HAL_UARTInterruptEnable = 72,
-HAL_UARTRate = 73,
-HAL_UARTFormat = 74,
-HAL_UARTFIFOSize = 75,
-HAL_UARTFIFOClear = 76,
-HAL_UARTFIFOEnable = 77,
-HAL_UARTFIFOThreshold = 78,
-HAL_UARTInterruptID = 79,
-HAL_UARTBreak = 80,
-HAL_UARTModemControl = 81,
-HAL_UARTModemStatus = 82,
-HAL_UARTDevice = 83,
-HAL_UARTDefault = 84,
-
-HAL_DebugRX = 85,
-HAL_DebugTX = 86,
-
-HAL_PCIFeatures = 87,
-HAL_PCIReadConfigByte = 88,
-HAL_PCIReadConfigHalfword = 89,
-HAL_PCIReadConfigWord = 90,
-HAL_PCIWriteConfigByte = 91,
-HAL_PCIWriteConfigHalfword = 92,
-HAL_PCIWriteConfigWord = 93,
-HAL_PCISpecialCycle = 94,
-HAL_PCISlotTable = 95,
-HAL_PCIAddresses = 96,
-
-HAL_PlatformName = 97,
-
-HAL_InitDevices = 100,
-
-HAL_KbdScanDependencies = 101,
-
-HAL_PhysInfo = 105,
-
-HAL_Reset = 106,
-
-HAL_IRQMax = 107,
-
-HAL_USBControllerInfo = 108,
-HAL_USBPortPower = 109,
-HAL_USBPortIRQStatus = 110,
-HAL_USBPortIRQClear = 111,
-HAL_USBPortDevice = 112,
-
-HAL_TimerIRQClear = 113,
-HAL_TimerIRQStatus = 114,
-
-HAL_ExtMachineID = 115,
-
-HAL_VideoFramestoreAddress = 116,
-HAL_VideoRender = 117,
-HAL_VideoStartupMode = 118,
-HAL_VideoPixelFormatList = 119,
-HAL_VideoIICOp = 120,
-
-HAL_Watchdog = 121 };
-
 uint32_t timer_period = 0;
 
 void enable_irq( int n )
@@ -760,204 +616,24 @@ enum devices { DEV_TIMER };
 
 static void hvc32( uint32_t syndrome )
 {
-#ifdef TRACING
-  switch ((syndrome & 0xffff)) {
-  case 0x5000: asm( "brk 0x5000" ); break;
-  case 0x5001:
-    asm ( "svc 0\nmov x4, %[a]\nsvc 10" : : [a] "r" (physical_address_of_mapped_NS_memory( 0xffff0000 )) );
-    break;
-  case 0x5002: set_partner_register( 1, 0x30000000 ); show_state(); return;
-  case 0x5003: set_partner_register( 1, 1 ); show_state(); return;
-  case 0x5004: set_partner_register( 0, 143 ); show_state(); return;
-  case 0x5005: set_partner_register( 5, get_partner_register( 5 ) << 12 ); show_state(); return;
-  case 0x5006: set_partner_register( 3, 1024 ); show_state(); return;
-  case 0x5007: set_partner_register( 3, 0 ); show_state(); return;
-  case 0x5008: set_partner_register( 2, 128 ); show_state(); return;
-  case 0x5009: set_partner_register( 0, 2 ); show_state(); return; // ClaimSysHeapNode
-  case 0x500a: set_partner_register( 5, 0x30000000 ); show_state(); return; // ClaimSysHeapNode extend block
-  case 0x500b: set_partner_register( 0, 0xfc0180f8 ); show_state(); return;
-  }
-#endif
-
-  // Isambard-aware RISC OS
-
-  switch ((syndrome & 0xffff)) {
-
-  case HAL_IRQEnable:
-    enable_irq( get_partner_register( 0 ) );
-    break;
-  case HAL_IRQDisable: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_IRQClear: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_IRQSource: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_IRQStatus: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_FIQEnable: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_FIQDisable: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_FIQDisableAll: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_FIQClear: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_FIQSource: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_FIQStatus: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_Timers: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_TimerDevice:
-    set_partner_register( 0, DEV_TIMER ); break;
-
-  case HAL_TimerGranularity:
-    switch (get_partner_register( 0 )) {
-    case 0: set_partner_register( 0, 100 ); break;
-    default: asm( "brk 0x9000" );
-    }
-    break;
-
-  case HAL_TimerMaxPeriod: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_TimerSetPeriod:
-    timer_period = get_partner_register( 0 );
-    break;
-  case HAL_TimerPeriod: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_TimerReadCountdown: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_CounterRate:
-    set_partner_register( 0, 1000 ); break;
-  case HAL_CounterPeriod:
-    set_partner_register( 0, timer_period ); break;
-  case HAL_CounterRead:
-    set_partner_register( 0, 0 ); break;
-  case HAL_CounterDelay: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_NVMemoryType:
-    set_partner_register( 0, 0 ); break; // No memory available... FIXME
-    set_partner_register( 0, (3 << 10) | 3 ); break;
-  case HAL_NVMemorySize:
-    set_partner_register( 0, 256 ); break;
-  case HAL_NVMemoryPageSize:
-    set_partner_register( 0, 0 ); break;
-  case HAL_NVMemoryProtectedSize:
-    set_partner_register( 0, 0 ); break;
-  case HAL_NVMemoryProtection: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_NVMemoryIICAddress:
-    set_partner_register( 0, 0 ); break;
-  case HAL_NVMemoryRead:
-    do_HAL_NVMemoryRead(); break;
-  case HAL_NVMemoryWrite:
-    do_HAL_NVMemoryWrite(); break;
-
-  case HAL_IICBuses:
-    set_partner_register( 0, 1 ); break; // FIXME in RISC OS - it can't be essential that one exists, can it?
-  case HAL_IICType:
-    set_partner_register( 0, (210 << 20) | 2 ); break;
-  case HAL_IICSetLines: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_IICReadLines: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_IICDevice:
-    set_partner_register( 0, 1 ); break; // FIXME in RISC OS - it can't be essential that one exists, can it?
-  case HAL_IICTransfer:
-    set_partner_register( 0, 2000 ); break; // IRQ descriptor
-  case HAL_IICMonitorTransfer: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_VideoFlybackDevice: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoSetMode: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoWritePaletteEntry: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoWritePaletteEntries: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoReadPaletteEntry: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoSetInterlace: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoSetBlank: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoSetPowerSave: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoUpdatePointer: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoSetDAG: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoVetMode: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoPixelFormats: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoFeatures: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoBufferAlignment: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoOutputFormat: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_IRQProperties: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_IRQSetCores: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_IRQGetCores: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_CPUCount: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_CPUNumber: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_SMPStartup: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_MachineID: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_ControllerAddress: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_HardwareInfo: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_SuperIOInfo: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PlatformInfo: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_CleanerSpace: 
-    set_partner_register( 0, -1 ); break; // Not needed
-
-  case HAL_UARTPorts: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTStartUp: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTShutdown: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTFeatures: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTReceiveByte: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTTransmitByte: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTLineStatus: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTInterruptEnable: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTRate: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTFormat: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTFIFOSize: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTFIFOClear: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTFIFOEnable: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTFIFOThreshold: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTInterruptID: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTBreak: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTModemControl: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTModemStatus: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTDevice: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_UARTDefault: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_DebugRX: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_DebugTX:
+  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 20 ), N( get_partner_register( 7 ) ), N( 0xffff8080 ) );
+  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 30 ), N( get_partner_register( 8 ) ), N( 0xffff8080 ) );
+  // hvc has a range of 0-15.
+  switch (syndrome & 15) {
+  case 14:
     {
-    static int x = 10;
-    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 1060 ), N( get_partner_register( 4 ) ), N( 0xffff00ff ) );
-    TRIVIAL_NUMERIC_DISPLAY__show_8bits( tnd, N( x ), N( 1070 ), N( get_partner_register( 0 ) ), N( 0xffff00ff ) );
-    x += 20;
-    if (get_partner_register( 0 ) == 0xa) x = 10; // Newline!
+      // Ack IRQ (temporary, this line should be executed in the GIC emulation)
+      uint64_t hcr2 = change_vm_system_register( HCR_EL2, 0, ~(1ull << 7) );
+      TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 10 ), N( 70 ), N( hcr2 ), N( 0xff00ff00 ) );
     }
     break;
-  case HAL_PCIFeatures: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PCIReadConfigByte: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PCIReadConfigHalfword: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PCIReadConfigWord: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PCIWriteConfigByte: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PCIWriteConfigHalfword: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PCIWriteConfigWord: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PCISpecialCycle: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PCISlotTable: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_PCIAddresses: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_PlatformName: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_InitDevices: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_KbdScanDependencies: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_PhysInfo: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_Reset: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_IRQMax:
-    set_partner_register( 0, 64 + 21 ); break;
-
-  case HAL_USBControllerInfo: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_USBPortPower: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_USBPortIRQStatus: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_USBPortIRQClear: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_USBPortDevice: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_TimerIRQClear: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_TimerIRQStatus: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_ExtMachineID: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_VideoFramestoreAddress: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoRender: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoStartupMode: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoPixelFormatList: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case HAL_VideoIICOp: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  case HAL_Watchdog: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-
-  default: asm( "brk 0x9000" );
+  case 15:
+    {
+      static uint32_t aarch64_counter = 0;
+      while ((++aarch64_counter & 0x3f) != 0) {
+        TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 40 ), N( aarch64_counter ), N( 0xffff8080 ) );
+      }
+    }
   }
 }
 
@@ -1746,15 +1422,6 @@ uint64_t vm_handler( uint64_t pc, uint64_t syndrome, uint64_t fault_address, uin
   case 0x4a006001: asm ( "svc 0" ); show_state(); { static int y = 10; TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 220 ), N( y ), N( get_partner_register( 0 ) ), N( 0xffffffff ) ); TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 300 ), N( y ), N( get_partner_register( 18 ) ), N( 0xffffffff ) ); y+= 10; } if ((get_partner_register( 0 ) >> 16) != 0xaaaa) { sleep_ms( 1000 ); return pc; } else asm( "brk 99" );
   }
 
-if ((syndrome & 0xfc000000) == 0x48000000 && (syndrome & 0xfff) != 0x0056) { // hvc32
-static int y = 30;
-TRIVIAL_NUMERIC_DISPLAY__show_8bits( tnd, N( 1200 ), N( y ), N( syndrome & 0xff ), N( 0xffffffff ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1220 ), N( y ), N( pc ), N( 0xffffffff ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1300 ), N( y ), N( get_partner_register( 18 ) ), N( 0xffffffff ) );
-y += 10;
-if (y > 1000) y = 30;
-}
-
 static uint32_t recent[5] = { 0 };
 show = true;
 for (int i = 0; show && i < 5; i++) {
@@ -1865,6 +1532,19 @@ void map_page( uint64_t physical, void *virtual )
   DRIVER_SYSTEM__map_at( driver_system(), device_page, NUMBER__from_integer_register( (integer_register) virtual ) );
 }
 
+static void ticker_thread()
+{
+  static uint32_t ticks = 0;
+  // Raise an interrupt on the virtual machine every so often.
+  for (;;) {
+    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 60 ), N( ++ticks ), N( 0xffff8080 ) );
+    sleep_ms( 2 ); // FIXME only for qemu
+    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 60 ), N( ++ticks ), N( 0xffff0000 ) );
+    uint64_t hcr2 = change_vm_system_register( HCR_EL2, (1ull << 7), ~(1ull << 7) );
+    TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 10 ), N( 70 ), N( hcr2 ), N( 0xffff0000 ) );
+  }
+}
+
 void entry()
 {
   // Give RISC OS control over the BSC interface
@@ -1955,11 +1635,18 @@ void entry()
     uint64_t next_pc = 0;
     progress( __LINE__ );
 
-    set_vm_system_register( HCR_EL2, hcr2 | (1 << 7) ); // Raise IRQ (enabled by bit 4, above)
+    {
+    static uint64_t __attribute__(( aligned( 16 ) )) stack[32];
+    uint64_t id = create_thread( ticker_thread, stack + 32 );
+
+      TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 10 ), N( 100 ), NUMBER__from_integer_register( id ), N( 0xffffffff ) );
+    }
 
     for (;;) {
       next_pc = switch_to_partner( vm_handler, next_pc );
-      progress( __LINE__ );
+      progress( get_partner_register( 15 ) );
+    static uint32_t l = 0;
+    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 90 ), N( ++l ), N( 0xffff8080 ) );
     }
   }
 }

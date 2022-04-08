@@ -105,18 +105,9 @@ asm ( ".section .text"
     "\n.previous" );
 
 asm ( ".section .text"
-    GLOBAL_FUNCTION( set_vm_system_register )
+    GLOBAL_FUNCTION( change_vm_system_register )
     "\n\tstp x29, x30, [sp, #-32]!"
-    "\n\tsvc " ENSTRING( ISAMBARD_SET_VM_SYSTEM_REGISTER )
-    "\n\tldp x29, x30, [sp], #32"
-    "\n\tret"
-    "\n.previous" );
-
-
-asm ( ".section .text"
-    GLOBAL_FUNCTION( get_vm_system_register )
-    "\n\tstp x29, x30, [sp, #-32]!"
-    "\n\tsvc " ENSTRING( ISAMBARD_GET_VM_SYSTEM_REGISTER )
+    "\n\tsvc " ENSTRING( ISAMBARD_CHANGE_VM_SYSTEM_REGISTER )
     "\n\tldp x29, x30, [sp], #32"
     "\n\tret"
     "\n.previous" );
