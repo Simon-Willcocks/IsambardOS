@@ -50,7 +50,8 @@ typedef union {
     uint64_t HWU160:1;
     uint64_t HWU161:1;
     uint64_t HWU162:1;
-    uint64_t res3:2;
+    uint64_t TBID0:1;
+    uint64_t TBID1:1;
     uint64_t NFD0:1;
     uint64_t NFD1:1;
     uint64_t res4:9;
@@ -146,7 +147,7 @@ void switch_to_running_in_high_memory( Core *phys_core, void (*himem_code)( Core
 
   phys_core->core_tt_l1[0] = entry;
 
-  // This will be used by all EL1 translation tables (what happens if non-secure EL1 sets it? FIXME
+  // This will be used by all EL1 translation tables (what happens if non-secure EL1 sets it? It gets restored from secure_registers.
   asm volatile ( "\tmsr MAIR_EL1, %[bits]":: [bits] "r" (Aarch64_VMSA_Isambard_memory_attributes) );
 
   const TCR1 tcr = { .t0sz = 30,        // 16GB
@@ -165,8 +166,8 @@ void switch_to_running_in_high_memory( Core *phys_core, void (*himem_code)( Core
   register uint64_t tmp;
 
   asm volatile ( "\tmsr TCR_EL1, %[bits]":: [bits] "r" (tcr.raw) );
-  vm[0].tcr_el1 = tcr.raw;
-  vm[0].ttbr1_el1 = (uint64_t) kernel_tt_l2;
+  secure_registers.tcr_el1 = tcr.raw;
+  secure_registers.ttbr1_el1 = (uint64_t) kernel_tt_l2;
   asm volatile ( "\tmsr TTBR1_EL1, %[table]" :: [table] "r" (kernel_tt_l2) );
   asm volatile ( "\tmsr TTBR0_EL1, %[table]" :: [table] "r" (&phys_core->core_tt_l1) );
   asm volatile ( "\tmrs %[sctlr], SCTLR_EL1"
@@ -189,7 +190,7 @@ void switch_to_running_in_high_memory( Core *phys_core, void (*himem_code)( Core
                "\n\tadd sp, sp, %[himem]"
 	       // Running in high memory
 	       : [tmp] "=&r" (tmp)
-	       , [sctlr] "=&r" (vm[0].sctlr_el1)
+	       , [sctlr] "=&r" (secure_registers.sctlr_el1)
 	       : [offset] "r" (virtual_stack_offset)
 	       , [himem] "r" (himem_offset) );
 

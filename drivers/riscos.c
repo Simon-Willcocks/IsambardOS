@@ -1,6 +1,8 @@
 /* Copyright (c) 2021 Simon Willcocks */
 
 // Load RISCOS image from SD card, execute it in a Non-Secure environment.
+// ...unless QEMU is defined, in which case include and run some test code.
+#define QEMU
 
 #include "drivers.h"
 #include "aarch64_vmsa.h"
@@ -32,27 +34,11 @@ ISAMBARD_INTERFACE( TRIVIAL_NUMERIC_DISPLAY )
 
 TRIVIAL_NUMERIC_DISPLAY tnd = {};
 
-static void progress( int p )
-{
-  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 10 ), N( p ), N( 0xffff8080 ) );
-}
-
-void show_state()
-{
-  for (int i = 0; i < 34; i++) {
-    uint64_t r;
-    asm ( "mov x0, %[n]\nsvc 7\nmov %[r], x0" : [r] "=&r" (r) : [n] "r" (i) : "x0" );
-    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 260+11*i ), N( r ), N( 0xffff8080 ) );
-  }
-}
-
 static void load_guest_os( PHYSICAL_MEMORY_BLOCK riscos_memory )
 {
 #ifndef QEMU
   PHYSICAL_MEMORY_BLOCK rom_memory;
   rom_memory = PHYSICAL_MEMORY_BLOCK__subblock( riscos_memory, rom_load, rom_size );
-
-  progress( __LINE__ );
 
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 910 ), PHYSICAL_MEMORY_BLOCK__physical_address( rom_memory ), N( 0xff0000ff ) );
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 10 ), N( 0x12121212 ), N( 0xfffff0f0 ) );
@@ -60,11 +46,7 @@ static void load_guest_os( PHYSICAL_MEMORY_BLOCK riscos_memory )
   NUMBER timer0 = DRIVER_SYSTEM__get_ms_timer_ticks( driver_system() );
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 100 ), ( timer0 ), N( 0xfffff0f0 ) );
 
-  progress( __LINE__ );
-
   BLOCK_DEVICE emmc = BLOCK_DEVICE__get_service( "EMMC", -1 );
-
-  progress( __LINE__ );
 
   BLOCK_DEVICE__read_4k_pages( emmc, PHYSICAL_MEMORY_BLOCK__duplicate_to_pass_to( emmc.r, rom_memory ), disc_address );
 
@@ -74,7 +56,6 @@ static void load_guest_os( PHYSICAL_MEMORY_BLOCK riscos_memory )
 
   TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 10 ), N( 0x13131313 ), N( 0xfffff0f0 ) );
 
-  progress( __LINE__ );
 #endif
 }
 
@@ -101,27 +82,6 @@ static uint32_t __attribute__(( target("+crc") )) hardware_crc32( const uint8_t 
   return ~crc;
 }
 
-#ifdef QEMU
-static void qemu_timer_thread()
-{
-  uint32_t *arm_code = (void *) ro_address.r;
-  uint32_t count = 0;
-  for (;;) {
-    uint32_t colour = 0xff00ff00;
-    if (++count == 100) {
-    count = 0;
-    for (int i = 0; i < 35; i++) {
-      uint64_t n = 0x44444444;
-      asm ( "mov x0, %[n]\nsvc 7\nmov %[r], x0" : [r] "=&r" (n) : [n] "r" (i) : "x0" );
-      TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 600 + 10*i ), NUMBER__from_integer_register( n ), N( colour ) );
-    }
-    asm ( "svc 0" );
-    }
-
-    sleep_ms( 25 );
-  }
-}
-#endif
 
 //#define TRACING
 #ifdef TRACING
@@ -143,12 +103,10 @@ static bool image_is_valid()
 static const // Make the array from the xxd generated header file rodata:
 #include "arm32_code.h"
   unsigned char* d = (void*) (ro_address.r + rom_load.r);
-  progress( __LINE__ );
 
   for (uint32_t i = 0; i < bare_metal_arm32_img_len; i++) {
     d[i] = bare_metal_arm32_img[i];
   }
-  progress( __LINE__ );
   return true;
 #else
 
@@ -267,6 +225,8 @@ static void clear_irq( int n )
   release_lock( &irq_lock );
 }
 
+#define BRK( N ) asm volatile ( "brk " ENSTRING( N ) )
+
 static void bcm_2835_irq_registers_access( bool is_write, int register_index, uint64_t offset )
 {
   claim_lock( &irq_lock );
@@ -307,7 +267,7 @@ static void bcm_2835_irq_registers_access( bool is_write, int register_index, ui
   case 0x20c:
     if (is_write) {
       irq_details.fiq_control = get_partner_register( register_index );
-      asm ( "brk 1" );
+      BRK( __LINE__ );
     }
     else {
       set_partner_register( register_index, irq_details.fiq_control );
@@ -368,7 +328,7 @@ static void bcm_2835_irq_registers_access( bool is_write, int register_index, ui
     }
     break;
 
-  default: asm ( "brk 1" ); // bcm_2835_irq_registers_access
+  default: BRK( __LINE__ ); // bcm_2835_irq_registers_access
   }
 
   if (is_write) {
@@ -409,6 +369,9 @@ static int x = 100;
 static int elc = 0xff0ff0f0;
 static bool show;
 
+static uint64_t vm_lock = 0;
+static uint32_t vm_thread = 0;
+
 
 static void cp15_access( uint32_t syndrome )
 {
@@ -416,30 +379,6 @@ static void cp15_access( uint32_t syndrome )
   // but this seems the easier approach for now. (There's bits to set to say
   // which accesses get trapped.)
   copro_syndrome cp = { .raw = syndrome };
-/*
-if ((syndrome & 0xffc1e) != 0x41c14
- && (syndrome & 0xffc1e) != 0x21c14
- && (syndrome & 0xffc1e) != 0x81c14
- && (syndrome & 0xffc1e) != 0x81c0a
-) {
-*/ if (show) {
-y+=10;
-if (y > 1000) {
-  y = 50;
-  x += 100;
-  if (x > 800) {
-    x = 100;
-    elc = elc ^ 0x00ffffff;
-  }
-}
-TRIVIAL_NUMERIC_DISPLAY__show_4bits( tnd, N( x ), N( y ), N( cp.Opc1 ), N( elc ) );
-TRIVIAL_NUMERIC_DISPLAY__show_4bits( tnd, N( x+10 ), N( y ), N( cp.CRn ), N( elc ) );
-TRIVIAL_NUMERIC_DISPLAY__show_4bits( tnd, N( x+20 ), N( y ), N( cp.CRm ), N( elc ) );
-TRIVIAL_NUMERIC_DISPLAY__show_4bits( tnd, N( x+30 ), N( y ), N( cp.Opc2 ), N( elc ) );
-TRIVIAL_NUMERIC_DISPLAY__show_4bits( tnd, N( x+40 ), N( y ), N( cp.is_read ), N( elc ) );
-TRIVIAL_NUMERIC_DISPLAY__show_8bits( tnd, N( x+50 ), N( y ), N( cp.Rt ), N( elc ) );
-asm ( "svc 0" );
-}
 
   switch (syndrome & 0xffc1e) { // CRm, CRn, Opc1, Opc2
   case 0x00000: READ_ONLY( 0x410FD034 ); break; // midr 
@@ -449,11 +388,11 @@ asm ( "svc 0" );
   case 0x08000: asm( "brk 66" ); break; // CSSELR 
 
 
-  case 0x00400: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( SCTLR_EL1, v ); } }; break; // SCTLR
-  case 0x00c00: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( DACR32_EL2, v ); } } break; // G7.2.35 DACR, Domain Access Control Register
-  case 0x40800: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( TCR_EL1, v ); } }; break; // Translation Table Base Control Register
-  case 0x00800: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( TTBR0_EL1, v ); ttbr0_el1 = v; } }; break; // Translation Table Base Register 0
-  //case 0x20400: { READ_WRITE( 7 ); if (!cp.is_read) { set_vm_system_register( ACTLR_EL1, v ); } }; break; // G7.2.1 ACTLR, Auxiliary Control Register  -- Fixing errata in Kernel/s/HAL:1031
+  case 0x00400: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( vm_thread, SCTLR_EL1, v ); } }; break; // SCTLR
+  case 0x00c00: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( vm_thread, DACR32_EL2, v ); } } break; // G7.2.35 DACR, Domain Access Control Register
+  case 0x40800: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( vm_thread, TCR_EL1, v ); } }; break; // Translation Table Base Control Register
+  case 0x00800: { READ_WRITE( 0 ); if (!cp.is_read) { set_vm_system_register( vm_thread, TTBR0_EL1, v ); ttbr0_el1 = v; } }; break; // Translation Table Base Register 0
+  //case 0x20400: { READ_WRITE( 7 ); if (!cp.is_read) { set_vm_system_register( vm_thread, ACTLR_EL1, v ); } }; break; // G7.2.1 ACTLR, Auxiliary Control Register  -- Fixing errata in Kernel/s/HAL:1031
   case 0x20400: { READ_WRITE( 7 ); }; break; // G7.2.1 ACTLR, Auxiliary Control Register
 
   // Question: why are these being trapped, I thought that was optional...?
@@ -469,20 +408,20 @@ asm ( "svc 0" );
   case 0x01800: // G7.2.43 DFAR, Data Fault Address Register
     {
       if (cp.is_read) {
-        set_partner_register( cp.Rt, get_vm_system_register( FAR_EL1 ) );
+        set_partner_register( cp.Rt, get_vm_system_register( vm_thread, FAR_EL1 ) );
       }
       else {
-        set_vm_system_register( FAR_EL1, get_partner_register( cp.Rt ) );
+        set_vm_system_register( vm_thread, FAR_EL1, get_partner_register( cp.Rt ) );
       }
       break;
     }
   case 0x01400: // G7.2.?? DFSR, Data Fault Status Register
     {
       if (cp.is_read) {
-        set_partner_register( cp.Rt, get_vm_system_register( ESR_EL1 ) );
+        set_partner_register( cp.Rt, get_vm_system_register( vm_thread, ESR_EL1 ) );
       }
       else {
-        set_vm_system_register( ESR_EL1, get_partner_register( cp.Rt ) );
+        set_vm_system_register( vm_thread, ESR_EL1, get_partner_register( cp.Rt ) );
       }
       break;
     }
@@ -518,7 +457,6 @@ asm ( "svc 0" );
 
   default: asm ( "brk 65" );
   }
-asm ( "svc 0" );
 }
 
 static void cp14_access( uint32_t syndrome )
@@ -535,109 +473,56 @@ static void cp14_access( uint32_t syndrome )
         switch (cp.CRm) {
         case 0:
           break;
-        default: asm ( "brk 1" );
+        default: BRK( __LINE__ );
         }
         break;
-      default: asm ( "brk 1" );
+      default: BRK( __LINE__ );
       }
       break;
-    default: asm ( "brk 1" );
+    default: BRK( __LINE__ );
     }
     break;
-  default: asm ( "brk 1" );
+  default: BRK( __LINE__ );
   }
 }
 
-static void cp15_access_RR( uint32_t syndrome ) { asm ( "brk 1" ); }
-static void ldstc( uint32_t syndrome ) { asm ( "brk 1" ); }
-static void fpaccess( uint32_t syndrome ) { asm ( "brk 1" ); }
-static void vmrs_access( uint32_t syndrome ) { asm ( "brk 1" ); }
-static void pointer_authentication( uint32_t syndrome ) { asm ( "brk 1" ); }
-static void cp14_access_RR( uint32_t syndrome ) { asm ( "brk 1" ); }
-static void illegal_execution_state( uint32_t syndrome ) { asm ( "brk 1" ); }
-
-uint32_t timer_period = 0;
-
-void enable_irq( int n )
-{
-}
-
-static uint8_t nvram[256];
-
-static void *driver_view_of_VM_memory( uint32_t va )
-{
-  uint32_t *tt = (void*) (ro_address.r + 0x02008000); // FIXME read from vm ttbr0 register
-
-  uint32_t level1 = tt[(va >> 20) & 0xfff];
-  switch (level1 & 3) {
-  case 0: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  case 1:
-    {
-      uint32_t *tt2 = (void*) (ro_address.r + (level1 & 0xfffffc00));
-      uint32_t level2 = tt2[(va >> 12) & 0xff];
-      // FIXME check validity
-      return (void*) (ro_address.r + ((va & 0x00000fff) | (level2 & 0xfffff000)));
-    }
-    break;
-  case 2: return (void*) (ro_address.r + ((va & 0x000fffff) | (level1 & 0xfff00000)));
-  case 3: asm( "brk %[n]" : : [n] "i" (__LINE__) ); break;
-  }
-  return 0;
-}
-
-static void *physical_address_of_mapped_NS_memory( uint32_t va )
-{
-    return (void*) (((uint64_t) driver_view_of_VM_memory( 0xffff0000 )) - ro_address.r + vm_memory_base);
-}
-
-void do_HAL_NVMemoryRead()
-{
-  uint8_t *nv = &nvram[get_partner_register( 0 )];
-  uint8_t *buffer = driver_view_of_VM_memory( get_partner_register( 1 ) );
-  unsigned int n = get_partner_register( 2 );
-  for (uint64_t i = 0; i < n; i++) {
-    buffer[i] = nv[i];
-  }
-  set_partner_register( 0, n );
-}
-
-void do_HAL_NVMemoryWrite()
-{
-  uint8_t *nv = &nvram[get_partner_register( 0 )];
-  uint8_t *buffer = driver_view_of_VM_memory( get_partner_register( 1 ) );
-  unsigned int n = get_partner_register( 2 );
-  for (uint64_t i = 0; i < n; i++) {
-    nvram[i] = buffer[i];
-  }
-  set_partner_register( 0, n );
-}
+static void cp15_access_RR( uint32_t syndrome ) { BRK( __LINE__ ); }
+static void ldstc( uint32_t syndrome ) { BRK( __LINE__ ); }
+static void fpaccess( uint32_t syndrome ) { BRK( __LINE__ ); }
+static void vmrs_access( uint32_t syndrome ) { BRK( __LINE__ ); }
+static void pointer_authentication( uint32_t syndrome ) { BRK( __LINE__ ); }
+static void cp14_access_RR( uint32_t syndrome ) { BRK( __LINE__ ); }
+static void illegal_execution_state( uint32_t syndrome ) { BRK( __LINE__ ); }
 
 enum devices { DEV_TIMER };
 
 static void hvc32( uint32_t syndrome )
 {
-  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 20 ), N( get_partner_register( 7 ) ), N( 0xffff8080 ) );
-  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 30 ), N( get_partner_register( 8 ) ), N( 0xffff8080 ) );
   // hvc has a range of 0-15.
   switch (syndrome & 15) {
   case 14:
     {
+      static uint32_t acks = 0;
       // Ack IRQ (temporary, this line should be executed in the GIC emulation)
-      uint64_t hcr2 = change_vm_system_register( HCR_EL2, 0, ~(1ull << 7) );
+      uint64_t hcr2 = change_vm_system_register( vm_thread, HCR_EL2, 0, ~(1ull << 7) );
       TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 10 ), N( 70 ), N( hcr2 ), N( 0xff00ff00 ) );
+      TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 80 ), N( ++acks ), N( 0xffff8080 ) );
     }
     break;
   case 15:
     {
       static uint32_t aarch64_counter = 0;
-      while ((++aarch64_counter & 0x3f) != 0) {
-        TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 40 ), N( aarch64_counter ), N( 0xffff8080 ) );
+      TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 20 ), N( get_partner_register( 7 ) ), N( 0xffff8080 ) );
+      TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 30 ), N( get_partner_register( 8 ) ), N( 0xffff8080 ) );
+      TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 100 ), N( 20 ), N( aarch64_counter ), N( 0xffff0000 ) );
+      while ((++aarch64_counter & 0xffffff) != 0) {
       }
+      TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 100 ), N( 20 ), N( aarch64_counter ), N( 0xff00ff00 ) );
     }
   }
 }
 
-static void smc32( uint32_t syndrome ) { asm ( "brk 1" ); }
+static void smc32( uint32_t syndrome ) { BRK( __LINE__ ); }
 
 static void respond_to_tag_request( uint32_t *request )
 {
@@ -696,7 +581,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 460 ), N( p[2] ), N( 0x
       default:
         TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 440 ), N( p[0] ), N( 0xff0ff0f0 ) );
         TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 450 ), N( p[3] ), N( 0xff0ff0f0 ) );
-        asm ( "brk 1" );
+        BRK( __LINE__ );
       }
       break;
     case 0x00038002: // Set clock rate
@@ -705,7 +590,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 460 ), N( p[2] ), N( 0x
       default:
         TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 440 ), N( p[0] ), N( 0xff0ff0f0 ) );
         TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 450 ), N( p[3] ), N( 0xff0ff0f0 ) );
-        asm ( "brk 1" );
+        BRK( __LINE__ );
       }
       break;
 
@@ -724,7 +609,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 460 ), N( p[2] ), N( 0x
     // Frame buffer
 
     default: // Unknown
-      asm ( "brk 1" );
+      BRK( __LINE__ );
       break;
     }
     p += 3 + p[1]/4;
@@ -744,68 +629,6 @@ static bool timer_passed( uint32_t now, uint32_t ticks, uint32_t match )
   return (match > now) && (match < (now + ticks));
 }
 
-static void timer_thread()
-{
-  uint32_t *arm_code = (void *) ro_address.r;
-  uint32_t count = 0;
-  for (;;) {
-    uint32_t colour = (system_timer.control_status != 0) ? 0xff00ff00 : 0xffffffff;
-    asm ( "svc 0" );
-    if ((count & 0x3ff) == 0) {
-uint32_t pc = 0;
-      TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 570 ), NUMBER__from_integer_register( count ), N( 0xffffffff ) );
-    for (int i = 0; i < 35; i++) {
-      uint64_t n;
-      asm ( "mov x0, %[n]\nsvc 7\nmov %[r], x0" : [r] "=&r" (n) : [n] "r" (i) : "x0" );
-if (i == 32) pc = n;
-      TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 600 + 10*i ), NUMBER__from_integer_register( n ), N( colour ) );
-    }
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 40 ), N( system_timer.control_status ), N( colour ) );
-TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1500 ), N( 50 ), N( system_timer.counter ), N( colour ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 60 ), N( system_timer.compare[0] ), N( system_timer.control_status & 1 ? 0xffff0000 : 0xff00ff00 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 70 ), N( system_timer.compare[1] ), N( system_timer.control_status & 2 ? 0xffff0000 : 0xff00ff00 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 80 ), N( system_timer.compare[2] ), N( system_timer.control_status & 4 ? 0xffff0000 : 0xff00ff00 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 90 ), N( system_timer.compare[3] ), N( system_timer.control_status & 8 ? 0xffff0000 : 0xff00ff00 ) );
-
-if (pc > 0xfc000000) {
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( 190 ), N( physical_address_of_mapped_NS_memory( 0xfc000000 ) ), N( 0xffff0000 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1700 ), N( 200 ), N( physical_address_of_mapped_NS_memory( 0xffff0000 ) ), N( 0xffff0000 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 190 ), N( driver_view_of_VM_memory( 0xfc000000 ) ), N( 0xffff0000 ) );
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1800 ), N( 200 ), N( driver_view_of_VM_memory( 0xffff0000 ) ), N( 0xffff0000 ) );
-/*
-uint32_t *zp = driver_view_of_VM_memory( 0xffff0000 );
-zp[0] = 0xe1a00000;
-zp[1] = 0xe1a00000;
-zp[2] = 0xe1a00000;
-zp[3] = 0xeafffffe;
-*/
-    //asm ( "mov x4, %[a]\nsvc 10" : : [a] "r" (physical_address_of_mapped_NS_memory( 0xfc080000 )) );
-}
-static uint32_t stop_count = 0;
-if (++stop_count == 100000 || pc == 0xffff000c) {
-    stop_count = 0;
-    show_state();
-    sleep_ms( 5000 );
-    asm ( "svc 0\nmov x4, %[a]\nsvc 10" : : [a] "r" (physical_address_of_mapped_NS_memory( 0xffff0000 )) );
-    uint64_t r;
-    asm ( "mov x0, %[n]\nsvc 7\nmov %[r], x0" : [r] "=&r" (r) : [n] "r" (32) : "x0" );
-}
-    }
-
-    // This is an inaccurate clock, it's probably worth giving RO a proper timer, triggered by interrupt.
-    const uint32_t ticks = 1000;
-    uint32_t now = system_timer.counter;
-    system_timer.counter += ticks;
-    for (int i = 0; i < 4; i++) {
-      if (timer_passed( now, ticks, system_timer.compare[i] )) {
-        system_timer.control_status |= (1 << i);
-        trigger_irq( i ); // Only irq 1 is used by RISC OS, the others are an educated guess.
-      }
-    }
-
-    sleep_ms( 1 );
-  }
-}
 
 static void bcm_2835_system_timer_access( bool is_write, int register_index, uint64_t offset )
 {
@@ -849,7 +672,7 @@ system_timer.compare[n] = system_timer.counter + 2500;
     }
     break;
   }
-  default: asm ( "brk 1" );
+  default: BRK( __LINE__ );
   }
 
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1350 ), N( 40 ), N( system_timer.control_status ), N( 0xff00ff00 ) );
@@ -866,7 +689,7 @@ extern struct __attribute__(( packed )) {
 
 static void bsc_access( unsigned device, bool is_write, int register_index, uint64_t offset )
 {
-  if (device >= 3) asm ( "brk 1" );
+  if (device >= 3) BRK( __LINE__ );
 
   if (device == 1) {
 NUMBER colours[2] = { { .r = 0xff00ff00 }, { .r = 0xff00ffff } };
@@ -885,7 +708,7 @@ if (y >= 1000) y -= 398;
     return;
   }
   else {
-    asm ( "brk 1" );
+    BRK( __LINE__ );
   }
   static struct {
     uint32_t Control;
@@ -917,7 +740,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1200 ), N( y ), N( (&BSC[device].C
 y += 10;
 if (y >= 1000) y -= 398;
 
-  if (device >= 3) asm ( "brk 1" );
+  if (device >= 3) BRK( __LINE__ );
 
   switch (offset) {
   case 0x00: // Control
@@ -930,7 +753,7 @@ if (y >= 1000) y -= 398;
           case 0x68: // ???
             data = (uint8_t*) "Hello world";
             break;
-          default: asm ( "brk 1" );
+          default: BRK( __LINE__ );
           }
         }
       }
@@ -972,7 +795,7 @@ if (y >= 1000) y -= 398;
   case 0x10: // Data_FIFO
     {
       if (is_write) {
-        asm ( "brk 1" );
+        BRK( __LINE__ );
       }
       else {
         set_partner_register( register_index, data == 0 ? 0 : *data++ );
@@ -1009,7 +832,7 @@ if (y >= 1000) y -= 398;
       }
     }
     break;
-  default: asm ( "brk 1" );
+  default: BRK( __LINE__ );
   }
 }
 
@@ -1064,7 +887,7 @@ static void sdcard()
       }
       release_lock( &emmc_state_lock );
       break;
-    default: asm ( "brk 1" );
+    default: BRK( __LINE__ );
     }
   }
 }
@@ -1291,7 +1114,7 @@ static void bcm_2835_emmc_access( bool is_write, int register_index, uint64_t of
       set_partner_register( register_index, emmc_state.SLOTISR_VER );
     }
     break;
-  default: asm ( "brk 1" );
+  default: BRK( __LINE__ );
   }
 
   release_lock( &emmc_state_lock );
@@ -1319,7 +1142,7 @@ static void stage2_data_abort( uint64_t syndrome, uint64_t fault_address, uint64
     };
   } s = { .raw = syndrome };
 
-  if (!s.ISV) asm ( "brk 1" );
+  if (!s.ISV) BRK( __LINE__ );
 
   static uint32_t mailbox_request = 0xffffffff;
 #define BASE 0x20000000
@@ -1336,7 +1159,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1500 ), N( 380 ), NUMBER__from_int
       if (!s.WnR) {
         set_partner_register( s.SRT, 1 << 12 ); // Report power on reset
       }
-      else { asm ( "brk 1" ); }
+      else { BRK( __LINE__ ); }
       break;
     }
 
@@ -1349,7 +1172,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1500 ), N( 380 ), NUMBER__from_int
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 420 ), NUMBER__from_integer_register( mailbox_request ), N( 0xff00ff00 ) );
         set_partner_register( s.SRT, mailbox_request );
       }
-      else { asm ( "brk 1" ); }
+      else { BRK( __LINE__ ); }
       break;
     }
   case BASE | 0x00b898: // Mailbox 0 status (always ready)
@@ -1357,7 +1180,7 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 420 ), NUMBER__from_int
       if (!s.WnR) {
         set_partner_register( s.SRT, 0 );
       }
-      else { asm ( "brk 1" ); }
+      else { BRK( __LINE__ ); }
       break;
     }
   case BASE | 0x00b8a0: // Mailbox 1 data
@@ -1371,7 +1194,6 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 410 ), NUMBER__from_int
         mailbox_request = get_partner_register( s.SRT );
 
 TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1500 ), N( 420 ), NUMBER__from_integer_register( mailbox_request ), N( 0xffff0000 ) );
-asm ( "svc 0" );
 
         if ((mailbox_request & 0xf) == 8) {
           uint32_t *arm_code = (void *) ro_address.r;
@@ -1380,9 +1202,9 @@ asm ( "svc 0" );
         else if ((mailbox_request & 0xf) == 0) {
           // Power control, not RISC OS' problem
         }
-        else { asm ( "brk 1" ); }
+        else { BRK( __LINE__ ); }
       }
-      else { asm ( "brk 1" ); }
+      else { BRK( __LINE__ ); }
       break;
     }
 
@@ -1408,54 +1230,20 @@ asm ( "svc 0" );
     bcm_2835_emmc_access( s.WnR, s.SRT, physical_fault_address & 0xfff ); break;
 
   default:
-    asm ( "brk 1" );
+    BRK( __LINE__ );
   }
 }
+
+static bool waiting_for_event = false;
+static bool waiting_for_interrupt = false;
 
 uint64_t vm_handler( uint64_t pc, uint64_t syndrome, uint64_t fault_address, uint64_t intermediate_physical_address )
 {
-  static int count = 0;
   uint64_t new_pc = pc; // Retry instruction by default
-
-  switch (syndrome) { // This is a terrible hack to remove cleaning the cache from NS EL1
-  case 0x4a006000: asm ( "svc 0" ); return get_partner_register( 18 ); // mov pc, lr at HAL_InvalidateCache_ARMvF
-  case 0x4a006001: asm ( "svc 0" ); show_state(); { static int y = 10; TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 220 ), N( y ), N( get_partner_register( 0 ) ), N( 0xffffffff ) ); TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 300 ), N( y ), N( get_partner_register( 18 ) ), N( 0xffffffff ) ); y+= 10; } if ((get_partner_register( 0 ) >> 16) != 0xaaaa) { sleep_ms( 1000 ); return pc; } else asm( "brk 99" );
-  }
-
-static uint32_t recent[5] = { 0 };
-show = true;
-for (int i = 0; show && i < 5; i++) {
-  if (recent[i] == fault_address) {
-    show = false;
-  }
-}
-if (show) {
-  recent[0] = recent[1];
-  recent[1] = recent[2];
-  recent[2] = recent[3];
-  recent[3] = recent[4];
-  recent[4] = fault_address;
-}
-
-if (show) {
-  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 200 ), N( syndrome ), N( 0xffff8080 ) );
-  TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1400 ), N( 210 ), N( fault_address ), N( 0xffff8080 ) );
-  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 220 ), N( intermediate_physical_address ), N( 0xffff8080 ) );
-  TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1400 ), N( 230 ), N( pc ), N( 0xfffff0f0 ) );
-  TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 1400 ), N( 240 ), N( count++ ), N( 0xfffff0f0 ) );
-
-  for (int i = 0; i < 31; i++) {
-    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 1400 ), N( 260+11*i ), N( get_partner_register( i ) ), N( 0xffff8080 ) );
-
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( x-70 ), N( y ), N( pc ), N( elc ) );
-  }
-
-TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( x-70 ), N( y+10 ), N( pc ), N( 0xffffffff ) );
-}
 
   switch (syndrome >> 26) {
   case 0b000000: asm ( "brk 0b000000" ); break; // Never happens or is unimplemented
-  case 0b000001: wait_until_woken(); break; // WFI or WFE
+  case 0b000001: if (0 == (syndrome & 1)) waiting_for_interrupt = true; else waiting_for_event = true; break;
   case 0b000010: asm ( "brk 0b000010" ); break; // Never happens or is unimplemented
   case 0b000011: cp15_access( syndrome ); new_pc += 4; break;
   case 0b000100: cp15_access_RR( syndrome ); new_pc += 4; break;
@@ -1520,9 +1308,6 @@ TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( x-70 ), N( y+10 ), N( pc ), N( 0xf
   case 0b111111: asm ( "brk 0b111111" ); break; // Never happens or is unimplemented
   }
 
-if (show) asm ( "svc 0" );
-asm ( "isb sy\ndsb sy\nsvc 0" ); // FIXME FIXME FIXME
-
   return new_pc;
 }
 
@@ -1532,16 +1317,39 @@ void map_page( uint64_t physical, void *virtual )
   DRIVER_SYSTEM__map_at( driver_system(), device_page, NUMBER__from_integer_register( (integer_register) virtual ) );
 }
 
+static bool volatile noisy_ticker_thread_running = false;
+
+static void noisy_ticker_thread()
+{
+  static uint32_t ticks = 0;
+  uint32_t *ram = (void*) (ro_address.r + 0x400000);
+  noisy_ticker_thread_running = true;
+  for (;;) {
+    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 200 ), N( ++ticks ), N( 0xff0000ff ) );
+    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 210 ), N( *ram ), N( 0xff0000ff ) ); // Word at 0x400000 in VM memory, there's no cache in NS EL1 yet.
+    asm ( "svc 0" ); // To update the screen on real hardware
+    sleep_ms( 1000 );
+  }
+}
+
+static bool volatile ticker_thread_running = false;
+
 static void ticker_thread()
 {
+  ticker_thread_running = true;
+    sleep_ms( 100 );
   static uint32_t ticks = 0;
   // Raise an interrupt on the virtual machine every so often.
   for (;;) {
-    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 60 ), N( ++ticks ), N( 0xffff8080 ) );
-    sleep_ms( 2 ); // FIXME only for qemu
-    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 60 ), N( ++ticks ), N( 0xffff0000 ) );
-    uint64_t hcr2 = change_vm_system_register( HCR_EL2, (1ull << 7), ~(1ull << 7) );
-    TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 10 ), N( 70 ), N( hcr2 ), N( 0xffff0000 ) );
+    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 160 ), N( ++ticks ), N( 0xffff8080 ) );
+    sleep_ms( 2000 ); // FIXME only good for qemu
+    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 170 ), N( ticks ), N( 0xffff0000 ) );
+    claim_lock( &vm_lock );     // This will work only as long as this is the same core as the VM
+    // (Otherwise the virtual machine might still be running, and we'll only get the lock when it
+    // voluntarily exits (or there's an interrupt on that core. FIXME
+    uint64_t hcr2 = change_vm_system_register( vm_thread, HCR_EL2, (1ull << 7), ~(1ull << 7) );
+    release_lock( &vm_lock );
+    TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 10 ), N( 180 ), N( hcr2 ), N( 0xffff0000 ) );
   }
 }
 
@@ -1552,28 +1360,22 @@ void entry()
 
   tnd = TRIVIAL_NUMERIC_DISPLAY__get_service( "Trivial Numeric Display", -1 );
 
-  progress( __LINE__ );
-
   riscos_memory = SYSTEM__allocate_memory( system, riscos_ram_size );
   if (riscos_memory.r == 0) {
     asm ( "brk 2" );
   }
 
-  progress( __LINE__ );
+  TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 400 ), PHYSICAL_MEMORY_BLOCK__physical_address( riscos_memory ), N( 0xff808080 ) );
+
   load_guest_os( riscos_memory );
-  progress( __LINE__ );
 
   DRIVER_SYSTEM__map_at( driver_system(), riscos_memory, ro_address );
-  progress( __LINE__ );
 
   if (image_is_valid()) {
-    progress( __LINE__ );
     // Establish a translation table mapping the VM "physical" addresses to real memory
     static const NUMBER tt_size = { .r = 4096 };
     PHYSICAL_MEMORY_BLOCK el2_tt = SYSTEM__allocate_memory( system, tt_size );
     DRIVER_SYSTEM__map_at( driver_system(), el2_tt, el2_tt_address );
-
-    progress( __LINE__ );
 
     vm_memory_base = PHYSICAL_MEMORY_BLOCK__physical_address( riscos_memory ).r;
 
@@ -1582,12 +1384,11 @@ void entry()
       tt[i] = Aarch64_VMSA_invalid;
     }
 
-    progress( __LINE__ );
-
     for (int i = 0; i < 32; i++) {
       Aarch64_VMSA_entry entry = Aarch64_VMSA_block_at( vm_memory_base + (i << 21) );
-      // Leave the caching to the OS
-      entry = Aarch64_VMSA_uncached_memory( entry );
+      // Leave the caching to the guest OS
+      // entry = Aarch64_VMSA_uncached_memory( entry );
+      entry = Aarch64_VMSA_write_back_memory( entry );
       entry.raw |= (1 <<10); // AF
       entry = Aarch64_VMSA_L2_rwx( entry );
       tt[i] = entry;
@@ -1595,19 +1396,20 @@ void entry()
         asm volatile ( "dc civac, %[va]" : : [va] "r" (&tt[i & ~1]) );
       }
     }
-    progress( __LINE__ );
 
-    DRIVER_SYSTEM__make_partner_thread( driver_system(), PHYSICAL_MEMORY_BLOCK__duplicate_to_pass_to( driver_system().r, el2_tt ) );
-    progress( __LINE__ );
+    DRIVER_SYSTEM__make_partner_thread( driver_system() );
 
     uint64_t hcr2 = 0b0001110000000000000011111110110000111011;
     // uint64_t hcr2 = 0b100 0001 1100 0000 0000 0000 1111 1110 1100 0011 1011;
     // 0 1 3 4 5 10 11 13 14 15 16 17 18 19 34 35 36 42
 
-    set_vm_system_register( HCR_EL2, hcr2 );
+    set_vm_system_register( this_thread, HCR_EL2, hcr2 );
 
-    // This seems to override the bits in HCR_EL2:
-    uint32_t cp15_traps = 0xffff;
+    // This seems to override the bits in HCR_EL2
+    // Traps cp15 accesses with CRn = bit number
+    // T4 and T14 are res 0.
+
+    uint32_t cp15_traps = 0b1011111111101111;
 /*
     cp15_traps &= ~(1 << 8); // Don't trap TLB maintenance instructions.
     // cp15_traps &= ~(1 << 7); // Don't trap cache maintenance instructions.  STOPS WORKING!
@@ -1622,31 +1424,62 @@ void entry()
 */
     cp15_traps &= ~(1 << 2);
 
-    set_vm_system_register( HSTR_EL2, cp15_traps );
-    //set_vm_system_register( HSTR_EL2, 0 );
+    set_vm_system_register( this_thread, VTTBR_EL2, PHYSICAL_MEMORY_BLOCK__physical_address( el2_tt ).r );
+    set_vm_system_register( this_thread, HSTR_EL2, cp15_traps );   // Hypervisor System Trap Register
+    set_vm_system_register( this_thread, VMPIDR_EL2, 0xc0000000 ); // Virtualization Multiprocessor ID Register
+    set_vm_system_register( this_thread, VPIDR_EL2, 0x410fc075 );  // Pi2, according to qemu
+    set_vm_system_register( this_thread, SCTLR_EL1, 0xd50070 );    //  ditto, except clearing SP alignment check bit
+    set_vm_system_register( this_thread, VTCR_EL2, 0x800080f22 );  // t0sz = 34 (1GB); SL0 = 0, IRGN0, ORGN0 = 0, TG0 = 0 (4k), PS = 0 (4GB), VS=1 (16-bit)
+
+    set_vm_system_register( this_thread, DACR32_EL2, ~0ull );  // Unused, 32 bit(?)
+    set_vm_system_register( this_thread, CONTEXTIDR_EL1, ~0ull );  // Unused, 32 bit(?)
 
     // Devices requiring asynchronous behaviour:
-    static uint64_t __attribute__(( aligned( 16 ) )) stack[32];
-    create_thread( timer_thread, stack + 32 );
     static uint64_t __attribute__(( aligned( 16 ) )) sdcard_stack[32];
     create_thread( sdcard, sdcard_stack + 32 );
     while (sdcard_thread == 0) { yield(); }
 
     uint64_t next_pc = 0;
-    progress( __LINE__ );
+
+    vm_thread = this_thread;
 
     {
-    static uint64_t __attribute__(( aligned( 16 ) )) stack[32];
-    uint64_t id = create_thread( ticker_thread, stack + 32 );
+      // Testing virtual interrupts, generate one every so often and check it
+      // behaves as expected.
+      static uint64_t __attribute__(( aligned( 16 ) )) stack[64];
+      create_thread( ticker_thread, stack + 32 );
+      while (ticker_thread_running == 0) { yield(); }
+    }
 
-      TRIVIAL_NUMERIC_DISPLAY__show_64bits( tnd, N( 10 ), N( 100 ), NUMBER__from_integer_register( id ), N( 0xffffffff ) );
+    {
+      // Testing virtual interrupts, generate one every so often and check it
+      // behaves as expected.
+      static uint64_t __attribute__(( aligned( 16 ) )) stack[64];
+      create_thread( noisy_ticker_thread, stack + 32 );
+      while (noisy_ticker_thread_running == 0) { yield(); }
     }
 
     for (;;) {
+      claim_lock( &vm_lock );
       next_pc = switch_to_partner( vm_handler, next_pc );
-      progress( get_partner_register( 15 ) );
-    static uint32_t l = 0;
-    TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 90 ), N( ++l ), N( 0xffff8080 ) );
+      release_lock( &vm_lock );
+
+      // The core has executed a WFI or WFE instruction, go idle
+      if (waiting_for_interrupt || waiting_for_event) {
+        wait_until_woken();
+
+        // These variables are set in vm_handler & reset here, in the same thread.
+        waiting_for_interrupt = false;
+        waiting_for_event = false;
+      }
+
+      TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 120 ), N( next_pc ), N( 0xff008080 ) );
+
+      static uint32_t l = 0;
+
+      TRIVIAL_NUMERIC_DISPLAY__show_32bits( tnd, N( 10 ), N( 130 ), N( ++l ), N( 0xffff8080 ) );
+
+      yield();
     }
   }
 }

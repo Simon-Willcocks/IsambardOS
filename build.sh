@@ -1,10 +1,10 @@
 #! /bin/bash -
 
-if [ "x$QEMU" != "x" ]; then
+#if [ "x$QEMU" != "x" ]; then
   pushd unit_tests/virtualisation &&
   ./make_test_image > ../../include/arm32_code.h &&
   popd || exit 1
-fi
+#fi
 
 if [ ! -e tools/interfaces -o tools/interfaces.c -nt tools/interfaces ] ; then
   gcc tools/interfaces.c -o tools/interfaces && ln -sf interfaces tools/server && ln -sf interfaces tools/client || exit 1
@@ -68,7 +68,7 @@ CFLAGS+=" -fno-PIC"
 echo CFLAGS: $CFLAGS
 
 #KERNEL_ELEMENTS="boot.c el3.c el3_gpio4_debug.c secure_el1.c kernel_translation_tables.c"
-KERNEL_ELEMENTS="boot.c el3.c el3_virtual_machines.c secure_el1.c kernel_translation_tables.c"
+KERNEL_ELEMENTS="boot.c el3.c el3_virtual_machines.c el3_bsod.c secure_el1.c kernel_translation_tables.c"
 
 SYSTEM_DRIVER=system
 MEMORY_DRIVER=physical_memory_allocator

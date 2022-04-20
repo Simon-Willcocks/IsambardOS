@@ -34,11 +34,8 @@ const int64_t lomem_bits = (32 * 1024 * 1024 - 1);
 // register(s), and writing the less important bits to a mailbox, to cause
 // an interrupt on a different core.
 
-// The virtual machine will be 32-bit code, so there's no need to store a
-// 64-bit SP.
 
-
-// Interrupts from non-secure mode will copy spsr_el3 and elr_el3 into the
+// Interrupts from non-secure mode will spsr_el3 and elr_el3 into the
 // corresponding _el1 registers, and drop to secure el1, which will store
 // the full context as it it were a normal driver thread.
 
@@ -49,273 +46,10 @@ const int64_t lomem_bits = (32 * 1024 * 1024 - 1);
 // the functionality, as it is scheduled in place of the non-secure thread.
 
 // Switching to and from secure mode requires storing the EL1 translation table
-// configuration.
-// What, and where?
-// TTBR0_EL1, TTBR1_EL1, ..., and in core.
+// configuration. This is done at EL3, in memory associated with the partner 
+// thread.
 
-#include "raw/gpio4_led.h"
-
-static uint32_t *const mapped_address = (void*) (16 << 20);
-
-static const uint32_t vwidth = 1920;
-
-#include "raw/trivial_display.h"
-
-extern void invalidate_all_caches();
-
-#ifdef QEMU
-static uint32_t *const screen_address = (void*) 0x3c200000;
-#else
-static uint32_t *const screen_address = (void*) 0x0e400000;
-#endif
-
-void map_screen()
-{
-  extern Aarch64_VMSA_entry kernel_tt_l2[16];
-  for (int i = 8; i < 12; i++) {
-    Aarch64_VMSA_entry entry = Aarch64_VMSA_block_at( ((i - 8) << 21) + (uint64_t) screen_address );
-    entry = Aarch64_VMSA_el0_rw_( entry );
-    entry.access_flag = 1; // Don't want to be notified when accessed
-    entry.shareability = 3; // Inner shareable
-    entry = Aarch64_VMSA_global( entry );
-    entry = Aarch64_VMSA_write_back_memory( entry );
-    kernel_tt_l2[i] = entry;
-  }
-  asm( "dmb sy" );
-}
-
-void map_2MB( uint32_t physical, uint32_t virtual )
-{
-  extern Aarch64_VMSA_entry kernel_tt_l2[16];
-  Aarch64_VMSA_entry entry = Aarch64_VMSA_block_at( ((physical >> 21)<<21) );
-  entry = Aarch64_VMSA_el0_rw_( entry );
-  entry.access_flag = 1; // Don't want to be notified when accessed
-  entry.shareability = 3; // Inner shareable
-  entry = Aarch64_VMSA_global( entry );
-  entry = Aarch64_VMSA_write_back_memory( entry );
-  kernel_tt_l2[virtual >> 21] = entry;
-  asm( "dmb sy" );
-}
-
-uint64_t c_bsod_regs[34] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 };
-
-static void show_thread( thread_context *thread, uint32_t x, uint32_t colour )
-{
-  thread = (void *) (((uint64_t) thread) & lomem_bits);
-
-  show_qword( x, 600, (uint64_t) thread, colour );
-  invalidate_all_caches();
-  for (int i = 0; i < 31; i++) { show_qword( x, 615+10*i, thread->regs[i], colour ); }
-
-  show_qword( x, 940, (uint64_t) thread->prev, colour );
-  show_qword( x, 950, (uint64_t) thread->next, colour );
-  show_qword( x, 960, (uint64_t) thread->partner, colour );
-
-  show_qword( x, 970, thread->pc, colour );
-  show_word( x, 980, thread->spsr, colour );
-  show_word( x, 990, thread->gate, colour );
-}
-
-void show_vm_regs()
-{
-  int y = 650;
-#define show( reg ) { show_qword( 1000, y, vm[1].reg, White ); y += 10; }
-  show( cntkctl_el1 );
-  show( csselr_el1 );
-
-  show( mair_el1 );
-  show( sctlr_el1 );
-
-  show( tcr_el1 );
-  show( ttbr0_el1 ); // Core-specific, in secure mode
-
-  show( ttbr1_el1 );
-  show( vbar_el1 );
-
-  show( actlr_el1 );
-  show( fpexc32_el2 ); // Placeholder
-
-y+=4;
-  show( esr_el1 );
-  show( far_el1 );
-
-y+=4;
-  show( vttbr_el2 );
-  show( hcr_el2 );
-  show( hstr_el2 );
-  show( vmpidr_el2 );
-  show( vpidr_el2 );
-  show( vtcr_el2 );
-  show( dacr32_el2 );
-  show( contextidr_el1 );
-#undef show
-}
-
-void c_show_page( uint64_t page )
-{
-  map_screen();
-  uint32_t base = 12 << 21;
-  map_2MB( page, base );
-
-  show_vm_regs();
-
-  thread_context *runnable;
-  asm ( "mov %[t], sp\norr %[t], %[t], #0xff0\nldr %[t], [%[t],#8]"
-        : [t] "=&r" (runnable) );
-
-  runnable = (void *) (((uint64_t) runnable) & lomem_bits);
-  show_thread( runnable, 400, White );
-  while (runnable->partner == 0) {
-    runnable = (void *) (((uint64_t) runnable->next) & lomem_bits);
-  }
-  invalidate_all_caches();
-  show_thread( runnable, 560, Green );
-  invalidate_all_caches();
-  show_thread( runnable->partner, 720, Yellow );
-
-  show_word( 720, 30, page, Yellow );
-  show_page( (void*) (base + (page & ((1 << 21)-1))) );
-  for (int count=0;;count++) { show_word( 500, 1000, count, Green ); invalidate_all_caches(); }
-}
-
-void c_bsod()
-{
-  // Can't store x1 using x1
-  asm ( "adr x1, c_bsod_regs"
-  "\n  stp x0, xzr, [x1], #16"
-  "\n  ldr x0, [sp, #8] // Return address"
-  "\n  str x0, [x1, #-8]"
-  "\n  stp x2, x3, [x1], #16"
-  "\n  stp x4, x5, [x1], #16"
-  "\n  stp x6, x7, [x1], #16"
-  "\n  stp x8, x9, [x1], #16"
-  "\n  stp x10, x11, [x1], #16"
-  "\n  stp x12, x13, [x1], #16"
-  "\n  stp x14, x15, [x1], #16"
-  "\n  stp x16, x17, [x1], #16"
-  "\n  stp x18, x19, [x1], #16"
-  "\n  stp x20, x21, [x1], #16"
-  "\n  stp x22, x23, [x1], #16"
-  "\n  stp x24, x25, [x1], #16"
-  "\n  stp x26, x27, [x1], #16"
-  "\n  stp x28, x29, [x1], #16"
-  "\n  ldr x0, [sp, #40] // runnable?"
-  "\n  stp x30, x0, [x1], #16"
-  );
-  invalidate_all_caches();
-
-  map_screen();
-
-  for (int i = 0; i < 34; i++) { show_qword( 200, 650+10*i, c_bsod_regs[i], Green ); }
-
-  invalidate_all_caches();
-
-  thread_context *runnable;
-  asm ( "mov %[t], sp\norr %[t], %[t], #0xff0\nldr %[t], [%[t],#8]"
-        : [t] "=&r" (runnable) );
-
-  runnable = (void *) (((uint64_t) runnable) & lomem_bits);
-  show_thread( runnable, 400, White );
-  while (runnable->partner == 0) {
-    runnable = (void *) (((uint64_t) runnable->next) & lomem_bits);
-  }
-  invalidate_all_caches();
-  show_thread( runnable, 560, Green );
-  invalidate_all_caches();
-  show_thread( runnable->partner, 720, Yellow );
-
-  show_vm_regs();
-
-  {
-  int y = 650;
-#define show( reg ) { uint64_t r; asm ( "mrs %[r], "#reg : [r] "=r" (r) ); show_qword( 10, y, r, White ); y += 10; }
-//show( cntkctl_el1 );
-//show( csselr_el1 );
-//show( mair_el1 );
-//show( sctlr_el1 );
-//show( tcr_el1 );
-//show( ttbr0_el1 );
-//show( ttbr1_el1 );
-//show( vbar_el1 );
-show( hcr_el2 );
-show( vttbr_el2 );
-show( hstr_el2 );
-show( vmpidr_el2 );
-show( vpidr_el2 );
-y += 5;
-show( vtcr_el2 );
-show( hpfar_el2 );
-show( ifsr32_el2 );
-show( isr_el1 );
-y += 10;
-show( far_el1 );
-show( elr_el1 );
-show( esr_el1 );
-show( spsr_el1 );
-show( sctlr_el1 );
-y += 2;
-show( ttbr0_el1 );
-show( ttbr1_el1 );
-y += 2;
-show( sp_el1 );
-show( vbar_el1 );
-y += 10;
-show( far_el2 );
-show( elr_el2 );
-show( esr_el2 );
-show( spsr_el2 );
-show( sctlr_el2 );
-
-  uint64_t currentel;
-  asm ( "mrs %[r], CurrentEL" : [r] "=r" (currentel) );
-
-  if (currentel == 0xc) {
-show( sp_el2 );
-show( vbar_el2 );
-y += 10;
-show( far_el3 );
-show( elr_el3 );
-show( esr_el3 );
-show( spsr_el3 );
-show( sctlr_el3 );
-show( vbar_el3 );
-y += 5;
-show( scr_el3 );
-  }
-}
-
-  invalidate_all_caches();
-// contextidr_el2, CPTR_EL2, DACR32_EL2, HACR_EL2, RMR_EL2, RMR_EL2, TPIDR_EL2; No use for these registers
-// ESR_EL2, FAR_EL2, HPFAR_EL2, IFSR32_EL2; passed to partner thread to inform of exceptions
-// sctlr_el2, tcr_el2, mair_el2, vbar_el2; Relates to Isambard VM implementation, doesn't change
-
-  map_2MB( 0x6000000, 6 << 21 );
-
-  for (int count=0;;count++) { show_word( 500, 1000, count, Blue ); invalidate_all_caches(); }
-for (int i = 0; i < 4; i++)
-{
-  show_page( (void*) (uint64_t) (((i+8) << 12) + (6 << 21)) );
-  invalidate_all_caches();
-  for (uint64_t t = 0; t < 10000000000ull; t++) { asm ( "" ); }
-}
-  for (uint64_t t = 0; t < 50000000000ull; t++) { asm ( "" ); }
-
-{
-  show_page( (void*) ((0x22ull << 12) + (6 << 21)) );
-  invalidate_all_caches();
-  for (uint64_t t = 0; t < 100000000000ull; t++) { asm ( "" ); }
-}
-
-  for (int p = 0; p < 64; p++) {
-    show_page( (void*) (uint64_t) ((p << 12) + (6 << 21)) );
-    invalidate_all_caches();
-    for (int t = 0; t < 1000000000; t++) { asm ( "" ); }
-  }
-
-  invalidate_all_caches();
-
-  for (;;) { }
-}
+extern void c_bsod();
 
 
 // NOTE!
@@ -340,34 +74,19 @@ for (int i = 0; i < 4; i++)
 // Uses x2, x3, x4, x5
 #define SAVE_VM_SYSTEM_REGS \
     asm ( \
-    "\n  adr x3, vm" \
-    "\n  mrs x2, vttbr_el2" \
-    "\n  mov x4, x2, lsr#48" \
-    "\n  cbz x4, bsod" \
-    "\n  cmp x4, #%[vmmax]" \
-    "\n  b.ge bsod" \
-    "\n  mov x5, #%[vmsize]" \
-    "\n  madd x3, x4, x5, x3" \
+    "\n  ldr x3, [x1, #8]" /* runnable, the non-secure partner thread */ \
+    "\n  add x3, x3, %[threadsize]" \
+    "\n  and x3, x3, #%[lomem_bits]" \
     : \
-    : [vmmax] "i" (numberof( vm )) \
-    , [vmsize] "i" (sizeof( vm[0] )) \
+    : [threadsize] "i" (sizeof( thread_context )) \
+    , [lomem_bits] "i" (lomem_bits) \
     ); \
-    SAVE_SYSTEM_REGISTER_PAIR( cntkctl_el1, csselr_el1 ) \
     SAVE_SYSTEM_REGISTER_PAIR( mair_el1, sctlr_el1 ) \
     SAVE_SYSTEM_REGISTER_PAIR( tcr_el1, ttbr0_el1 ) \
     SAVE_SYSTEM_REGISTER_PAIR( ttbr1_el1, vbar_el1 ) \
     SAVE_SYSTEM_REGISTER_PAIR( actlr_el1, fpexc32_el2 ) \
     SAVE_SYSTEM_REGISTER_PAIR( esr_el1, far_el1 ) \
-    asm ( \
-      "\n  mrs x5, hcr_el2" \
-      "\n  stp x2, x5, [x3, #%[n1off]]" \
-      "\n.ifne %[n2off] - %[n1off] - 8" \
-      "\n  .error \"Trying to access pair of system variables that aren't consecutive: vttbr_el2, hcr_el2\"" \
-      "\n.endif" \
-      : \
-      : [n1off] "i" (&((vm_state *)0)->vttbr_el2) \
-      , [n2off] "i" (&((vm_state *)0)->hcr_el2) \
-    ); \
+    SAVE_SYSTEM_REGISTER_PAIR( vttbr_el2, hcr_el2 ) \
     SAVE_SYSTEM_REGISTER_PAIR( hstr_el2, vmpidr_el2 ) \
     SAVE_SYSTEM_REGISTER_PAIR( vpidr_el2, vtcr_el2 ) \
     SAVE_SYSTEM_REGISTER_PAIR( dacr32_el2, contextidr_el1 ) \
@@ -386,21 +105,14 @@ for (int i = 0; i < 4; i++)
     , [n2off] "i" (&((vm_state *)0)->name2) \
   );
 
-// Expects x4 to be number of vm (> 0, < numberof( vm ))
+// Expects x0 to point to the VM partner thread (with system registers)
 // Uses x3, x4, x5
 #define LOAD_VM_SYSTEM_REGS \
     asm ( \
-    "\n  adr x3, vm" \
-    "\n  cbz x4, bsod" \
-    "\n  cmp x4, #%[vmmax]" \
-    "\n  b.ge bsod" \
-    "\n  mov x5, #%[vmsize]" \
-    "\n  madd x3, x4, x5, x3" \
+    "\n  add x3, x0, %[threadsize]" \
     : \
-    : [vmmax] "i" (numberof( vm )) \
-    , [vmsize] "i" (sizeof( vm[0] )) \
+    : [threadsize] "i" (sizeof( thread_context )) \
     ); \
-    LOAD_SYSTEM_REGISTER_PAIR( cntkctl_el1, csselr_el1 ) \
     LOAD_SYSTEM_REGISTER_PAIR( mair_el1, sctlr_el1 ) \
     LOAD_SYSTEM_REGISTER_PAIR( tcr_el1, ttbr0_el1 ) \
     LOAD_SYSTEM_REGISTER_PAIR( ttbr1_el1, vbar_el1 ) \
@@ -415,28 +127,20 @@ for (int i = 0; i < 4; i++)
 // Expects x1 -> core->core
 #define LOAD_SECURE_EL1_REGS \
     asm ( \
-    "\n  adr x3, vm" ); \
-    LOAD_SYSTEM_REGISTER_PAIR( cntkctl_el1, csselr_el1 ) \
+    "\n  adr x3, secure_registers" ); \
     LOAD_SYSTEM_REGISTER_PAIR( mair_el1, sctlr_el1 ) \
-    asm ( \
-      "\n  mrs x5, hcr_el2" \
-      "\n  stp x2, x5, [x3, #%[n1off]]" \
-      : \
-      : [n1off] "i" (&((vm_state *)0)->vttbr_el2) \
-      , [n2off] "i" (&((vm_state *)0)->hcr_el2) \
-    ); \
     asm ( \
     "\n  // LOAD_SYSTEM_REGISTER_PAIR( tcr_el1, ttbr0_el1 )" \
     "\n  // TODO: See if separating the following two lines from the msr and each other affects speed" \
     "\n  // Get the physical address of the current core structure, and add the offset to the TT" \
-    "\n  ldp x4, x5, [x3, #%[n1off]]" \
+    "\n  ldr x4, [x3, #%[n1off]]" \
     "\n  add x2, x1, #16 - %[core_size] + %[pa_offset]" \
     "\n  ldr x5, [x2]" \
     "\n  add x5, x5, #%[tt_l1_offset]" \
     "\n  msr tcr_el1, x4" \
     "\n  msr ttbr0_el1, x5" \
     "\n.ifne %[n2off] - %[n1off] - 8" \
-    "\n  .error \"Trying to access pair of system variables that aren't consecutive: vttbr_el2, hcr_el2\"" \
+    "\n  .error \"Trying to access pair of system variables that aren't consecutive: tcr_el1, ttbr0_el1\"" \
     "\n.endif" \
     : \
     : [core_size] "i" (sizeof( Core )) \
@@ -453,17 +157,9 @@ for (int i = 0; i < 4; i++)
 
 // x1 points to where core and runnable are stored (himem address)
 
-#define AARCH64_VECTOR_TABLE_NEVER_SP0_CODE asm ( \
-    "\nin_el3: // x1 points to core, runnable, original x0-x3 are stacked" \
+#define AARCH64_VECTOR_TABLE_NEVER_SP0_CODE asm ( "\n" \
+    "in_el3: // x1 points to core, runnable, original x0-x3 are stacked" \
 \
-    "\n  mrs x2, esr_el3" \
-    "\n  mov x3, #0x5e000000" \
-    "\n  cmp x3, x2" \
-    "\n  b.eq 1f" \
-    "\n  tbz w2, #8, bsod" \
-    "\n  mov x0, x4" \
-    "\n  bl c_show_page" \
-    "\n1:" \
     "\n  // Toggle security state, IRQ, FIQ routing" \
     "\n  mrs x3, scr_el3" \
     "\n  eor x3, x3, #0x007 // FIQ. IRQ, NS" \
@@ -472,24 +168,26 @@ for (int i = 0; i < 4; i++)
     "\n  tbz x3, #0, switch_to_secure" \
 \
     "\n  add sp, sp, #32 // stacked registers not needed" \
-    "\n  mov x4, #1 // FIXME: only one VM supported, need to get required VMID to this code" \
+    "\n  ldr x0, [x1, #8]" /* non-secure partner */ \
+    "\n  and x0, x0, #%[lomem_bits]" \
+      : :  [lomem_bits] "i" (lomem_bits) \
     ); \
     LOAD_VM_SYSTEM_REGS \
     asm ( \
     "\n  // Drop straight to non-secure EL < 2, skipping EL2" \
-    "\n  ldr x0, [x1, #8]" \
-    "\n  and x0, x0, #%[lomem_bits]" \
     "\n  ldp x2, x3, [x0, #%[pc]] // Includes never-used gate value" \
     "\n  msr elr_el3, x2" \
     "\n  msr spsr_el3, x3" \
-    "\n b resume_ns_thread" \
-    "\n  eret" \
-    : : \
-        [pc] "i" (&((thread_context*)0)->pc), \
-        [lomem_bits] "i" (lomem_bits) \
+                                "\n  and x29, x3, #15" \
+                                "\n  cmp x29, #0xd" \
+                                "\n  bne resume_ns_thread" \
+                                "\n  bl bsod" \
+    "\n  b resume_ns_thread" \
+    : \
+    : [pc] "i" (&((thread_context*)0)->pc) \
     ); \
     asm ( \
-    "\nrestore_secure_system_regs:" \
+    "restore_secure_system_regs:" \
     ); \
     SAVE_VM_SYSTEM_REGS \
     LOAD_SECURE_EL1_REGS \
@@ -507,8 +205,8 @@ for (int i = 0; i < 4; i++)
     "\n  b c_bsod" );
 
 #define AARCH64_VECTOR_TABLE_SPX_IRQ_CODE asm ( "bl bsod" ); \
-    asm ( \
-    "\nresume_ns_thread:" \
+    asm ( "\n" \
+    "resume_ns_thread:" \
     load_pair( x0, 2, 3 ) \
     load_pair( x0, 4, 5 ) \
     load_pair( x0, 6, 7 ) \
@@ -529,9 +227,9 @@ for (int i = 0; i < 4; i++)
     : : [regs] "i" (&((thread_context*)0)->regs) \
     );
 
-#define AARCH64_VECTOR_TABLE_SPX_FIQ_CODE asm ( "bl bsod" );
-#define AARCH64_VECTOR_TABLE_SPX_SERROR_CODE asm ( "bl bsod" \
-    "\nswitch_to_secure:" \
+#define AARCH64_VECTOR_TABLE_SPX_FIQ_CODE asm ( "bl bsod\n" );
+#define AARCH64_VECTOR_TABLE_SPX_SERROR_CODE asm ( "bl bsod\n" \
+    "switch_to_secure:" \
     "\n  stp x4, x5, [sp, #-16]! // Push x4 and x5 as well" \
 \
     "\n  // Switch to secure mode, and partner thread" \
@@ -542,6 +240,7 @@ for (int i = 0; i < 4; i++)
     "\n  mrs x2, elr_el2" \
     "\n  msr elr_el1, x2" \
     "\n  mrs x3, spsr_el2" \
+                                    "\n  tbz x3, #4, c_bsod" \
     "\n  msr spsr_el1, x3" \
     "\n  // Make a switch to partner call on secure EL1" \
     "\n  mov x0, #0x56000000" \
@@ -660,38 +359,8 @@ for (int i = 0; i < 4; i++)
 
 #include "aarch64_vector_table.h"
 
-vm_state default_vm_state = { 0 };
-
-static void initialise_default_vm()
-{
-  asm ( "mrs %[r], cntkctl_el1" : [r] "=r" (default_vm_state.cntkctl_el1) );
-  asm ( "mrs %[r], csselr_el1" : [r] "=r" (default_vm_state.csselr_el1) );
-
-  asm ( "mrs %[r], mair_el1" : [r] "=r" (default_vm_state.mair_el1) );
-  asm ( "mrs %[r], sctlr_el1" : [r] "=r" (default_vm_state.sctlr_el1) );
-
-  asm ( "mrs %[r], tcr_el1" : [r] "=r" (default_vm_state.tcr_el1) );
-  asm ( "mrs %[r], ttbr0_el1" : [r] "=r" (default_vm_state.ttbr0_el1) ); // Core-specific, in secure mode
-
-  asm ( "mrs %[r], ttbr1_el1" : [r] "=r" (default_vm_state.ttbr1_el1) );
-  asm ( "mrs %[r], vbar_el1" : [r] "=r" (default_vm_state.vbar_el1) );
-
-  asm ( "mrs %[r], actlr_el1" : [r] "=r" (default_vm_state.actlr_el1) );
-  asm ( "mrs %[r], fpexc32_el2" : [r] "=r" (default_vm_state.fpexc32_el2) ); // Placeholder
-
-  default_vm_state.vttbr_el2 = 0;
-  asm ( "mrs %[r], hcr_el2" : [r] "=r" (default_vm_state.hcr_el2) );
-  asm ( "mrs %[r], hstr_el2" : [r] "=r" (default_vm_state.hstr_el2) );
-  asm ( "mrs %[r], vmpidr_el2" : [r] "=r" (default_vm_state.vmpidr_el2) );
-  asm ( "mrs %[r], vpidr_el2" : [r] "=r" (default_vm_state.vpidr_el2) );
-  asm ( "mrs %[r], vtcr_el2" : [r] "=r" (default_vm_state.vtcr_el2) );
-  asm ( "mrs %[r], dacr32_el2" : [r] "=r" (default_vm_state.dacr32_el2) );
-  asm ( "mrs %[r], contextidr_el1" : [r] "=r" (default_vm_state.contextidr_el1) );
-}
-
 void __attribute__(( noreturn )) el3_with_mmu( EL_PARAMETERS )
 {
-  initialise_default_vm();
   el3_prepare_el2_for_entry( core );
   el3_run_at_secure_el1( EL_ARGUMENTS, isambard_secure_el1 );
 }
@@ -714,18 +383,42 @@ void __attribute__(( noreturn )) el3_synchronised_initialise( EL_PARAMETERS )
   core->physical_address = core; // For passing to MMU, EL1 (without MMU), etc.
 
   el3_run_with_mmu( EL_ARGUMENTS, el3_with_mmu );
+
   __builtin_unreachable();
 }
 
-void roll_call( core_types *present, unsigned number )
+static void watchdog()
 {
+#ifdef QEMU
+static uint32_t *const screen_address = (void*) 0x3c200000;
+#else
+static uint32_t *const screen_address = (void*) 0x0e400000;
+#endif
+  int n = 0;
+  uint32_t volatile *counter = (void*) 0x04400000;
+  *counter = 0x44446666;
+  for (;;) {
+    uint32_t old_value = *counter;
+    for (int i = 0; i < 0x7fffff; i++) { asm ( "" ); };
+    uint32_t new_value = *counter;
+    screen_address[n++] = (old_value == new_value) ? 0xffff0000 : 0xffffff00;
+  }
+}
+
+
+void roll_call( core_types volatile *present, unsigned number )
+{
+  if (number == 3) {
+    // Watchdog core
+    present[number] = SPECIAL; // Tell the caller we won't be returning
+    watchdog();
+  }
+
+
   // EL2 and EL3 are a simple veneer to switch between Secure and Non-Secure
   // No need for separate tables.
   asm volatile ( "  msr VBAR_EL3, %[table]\n" : : [table] "r" (VBAR_EL23) );
   asm volatile ( "  msr VBAR_EL2, %[table]\n" : : [table] "r" (VBAR_EL23) );
-
-  asm volatile ( "  msr VPIDR_EL2, %[bits]\n" : : [bits] "r" (0x410FD034) );
-
 
   // SDD no debug events in secure mode, this means that there's no need to context switch debug
   // registers between Secure and Non-Secure mode.
@@ -740,8 +433,6 @@ void roll_call( core_types *present, unsigned number )
   asm volatile ( "  mrs %[bits], MDCR_EL2\n" : [bits] "=r" (bits) );
   bits |= (1 << 8);
   asm volatile ( "  msr MDCR_EL2, %[bits]\n" : : [bits] "r" (bits) );
-
-  led_init( 0x3f200000 );
 
   present[number] = NORMAL;
 }

@@ -15,8 +15,6 @@ static const interface_index system_map_index = 1;
 static const interface_index memory_allocator_map_index = 2;
 static const unsigned number_of_system_maps = 2;
 
-uint64_t VTTBR_EL2 = 0;
-
 // build.sh generated:
 #include "drivers_info.h"
 
@@ -24,16 +22,16 @@ uint64_t VTTBR_EL2 = 0;
 
 void VBAR_SEL1();
 
-vm_state __attribute__(( aligned( 16 ) )) vm[2] = {
-    {
-      .cntkctl_el1 = 0b1100000011, // ARM DDI 0487C.a D10-2942
+// A place to store the secure mode registers,
+// The values are not expected to change once initialised.
+vm_state __attribute__(( aligned( 16 ) )) secure_registers = {
       .mair_el1 = Aarch64_VMSA_Isambard_memory_attributes,
       .sctlr_el1 = 0,     // Set in switch_to_running_in_high_memory
       .tcr_el1 = 0,       // Set in switch_to_running_in_high_memory
       .ttbr1_el1 = 0,     // Set in switch_to_running_in_high_memory
       // .ttbr0_el1 = 0, core-specific
       .vbar_el1 = (uint64_t) VBAR_SEL1
-    } };
+};
 
 static inline uint8_t *start_address()
 {
@@ -222,15 +220,15 @@ static uint32_t __attribute__(( optimize( 1 ) )) heap_offset_lsr4( void *p )
 static void read_heap( uint64_t offset, uint64_t length, void *destination )
 {
   if (offset > kernel_heap_top - kernel_heap_bottom) {
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
 
   if (0 != (offset & 15)) { // Heap always aligned on 16-byte boundaries
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
 
   if (0 != (length & 15)) { // Heap always aligned on 16-byte boundaries
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
 
   void *source = start_address() + kernel_heap_top - offset;
@@ -245,15 +243,15 @@ static void read_heap( uint64_t offset, uint64_t length, void *destination )
 static void write_heap( uint64_t offset, uint64_t length, void *source )
 {
   if (offset > kernel_heap_top - kernel_heap_bottom) {
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
 
   if (0 != (offset & 15)) { // Heap always aligned on 16-byte boundaries
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
 
   if (0 != (length & 15)) { // Heap always aligned on 16-byte boundaries
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
 
   void *destination = start_address() + kernel_heap_top - offset;
@@ -279,17 +277,17 @@ void *allocate_heap( uint64_t size )
 static void free_heap( uint64_t offset, uint64_t size )
 {
   if (offset > kernel_heap_top - kernel_heap_bottom) {
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
 
   if (0 != (offset & 15)) { // Heap always aligned on 16-byte boundaries
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
 
   if (0 != (size & 15)) {
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
-  BSOD( __COUNTER__ );
+  BSOD( __LINE__ );
 }
 
 static const uint64_t free_marker = 0x00746e4965657246;
@@ -349,11 +347,11 @@ static Interface *obtain_interface()
   } while (!store_exclusive_word( &kernel_free_interface, result->free.next ));
 
   if (result->free.marker != free_marker) {
-    for (;;) { BSOD( __COUNTER__ ) }
+    for (;;) { BSOD( __LINE__ ) }
   }
 
   if (result->free.next == 0) { // Just emptied the list, allocate some more
-    for (;;) { BSOD( __COUNTER__ ) }
+    for (;;) { BSOD( __LINE__ ) }
   }
 
   return result;
@@ -522,10 +520,10 @@ void change_map( Core *core, thread_context *thread, interface_index new_map )
 {
   // Ensure the index is within range
   if (thread->current_map > kernel_last_interface) {
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
   if (new_map > kernel_last_interface) {
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
 
   if (core->loaded_map != new_map) {
@@ -533,7 +531,7 @@ void change_map( Core *core, thread_context *thread, interface_index new_map )
   }
 
   if (core->loaded_map != new_map) {
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
 
   thread->current_map = new_map;
@@ -541,7 +539,7 @@ void change_map( Core *core, thread_context *thread, interface_index new_map )
 
 static void __attribute__(( noinline )) incompatible_event()
 {
-  BSOD( __COUNTER__ );
+  BSOD( __LINE__ );
 }
 
 static inline integer_register fault_address()
@@ -597,7 +595,7 @@ static VirtualMemoryBlock * __attribute__(( optimize( 1 ) )) find_vmb( thread_co
   VirtualMemoryBlock *vmb = heap_pointer_from_offset_lsr4( mv.heap_offset_lsr4 );
 
   if (mv.heap_offset_lsr4 > ((kernel_heap_top - kernel_heap_bottom)>>4)) {
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
 
   while (vmb->page_count > 0) {
@@ -626,10 +624,10 @@ static bool is_l2_aligned( uint64_t start_page, uint64_t page_count )
 static bool find_and_map_memory( Core *core, thread_context *thread, uint64_t fa )
 {
   if (thread->current_map == system_map_index) {
-    BSOD( __COUNTER__ ); // System map exception
+    BSOD( __LINE__ ); // System map exception
   }
   if (thread->current_map == memory_allocator_map_index) {
-    BSOD( __COUNTER__ ); // Memory manager map exception
+    BSOD( __LINE__ ); // Memory manager map exception
   }
   VirtualMemoryBlock *vmb = find_vmb( thread, fa );
   if (vmb == 0) {
@@ -642,7 +640,7 @@ static bool find_and_map_memory( Core *core, thread_context *thread, uint64_t fa
     Interface *memory_provider = interface_from_index( vmb->memory_block );
 
     if (0 == memory_provider)
-      BSOD( __COUNTER__ );
+      BSOD( __LINE__ );
 
     if (memory_provider->provider == system_map_index
      && memory_provider->handler == System_Service_PhysicalMemoryBlock) {
@@ -690,7 +688,7 @@ static bool find_and_map_memory( Core *core, thread_context *thread, uint64_t fa
       return true;
     }
     else {
-      BSOD( __COUNTER__ );
+      BSOD( __LINE__ );
       // No non-memory-manager memory areas supported yet.
     }
   }
@@ -724,7 +722,7 @@ void map_initial_storage( Core *core0, unsigned initial_heap, unsigned initial_i
 {
   // Map memory for interfaces (grows up), and heap (grows down)
 
-  if (initial_interfaces < number_of_special_interfaces) for (;;) { BSOD( __COUNTER__ ) }
+  if (initial_interfaces < number_of_special_interfaces) for (;;) { BSOD( __LINE__ ) }
 
   int heap_pages = pages_needed_for( initial_heap );
   int interface_pages = pages_needed_for( initial_interfaces * sizeof( Interface ) );
@@ -808,7 +806,7 @@ void initialise_driver_maps( Core *core0, integer_register first_free_page )
 
     if ((drivers[i].start & 0xfff)
      || (drivers[i].end & 0xfff)) {
-      BSOD( __COUNTER__ );
+      BSOD( __LINE__ );
     }
     static const int INITIAL_VMBs_PER_DRIVER = 12;
 
@@ -870,9 +868,10 @@ void __attribute__(( noreturn )) enter_secure_el1_himem( Core *core )
 
   asm volatile ( "\tmsr VBAR_EL1, %[table]\n" : : [table] "r" (VBAR_SEL1) );
 
-  vm[0].vbar_el1 = (uint64_t) VBAR_SEL1;
+  secure_registers.vbar_el1 = (uint64_t) VBAR_SEL1;
 
-  asm volatile ( "\tmsr CNTKCTL_EL1, %[bits]\n" : : [bits] "r" (vm[0].cntkctl_el1) );
+  // ARM DDI 0487C.a D10-2942
+  asm volatile ( "\tmsr CNTKCTL_EL1, %[bits]\n" : : [bits] "r" (0b1100000011) );
 
   core->core = core;
 
@@ -968,11 +967,11 @@ static thread_switch system_driver_request( Core *core, thread_context *thread )
       uint32_t page = thread->regs[2] >> 12;
 
       if (page >= numberof( shared_system_map )) {
-        for (;;) BSOD( __COUNTER__ )
+        for (;;) BSOD( __LINE__ )
       }
 
       if (shared_system_map[page].raw != Aarch64_VMSA_invalid.raw) {
-        for (;;) BSOD( __COUNTER__ )
+        for (;;) BSOD( __LINE__ )
       }
       core->system_thread_stack.entry[4] = thread->regs[2];
 
@@ -1023,7 +1022,7 @@ static thread_switch system_driver_request( Core *core, thread_context *thread )
       uint32_t end = drivers[driver].start + ((drivers[driver].code_pages + drivers[driver].data_pages) << 12);
       if (drivers[driver].end != end)
       {
-        BSOD( __COUNTER__ );
+        BSOD( __LINE__ );
       }
     }
     else {
@@ -1038,7 +1037,7 @@ static thread_switch system_driver_request( Core *core, thread_context *thread )
     if (e != 0)
       thread->regs[0] = e->object.as_number;
     else
-      BSOD( __COUNTER__ );
+      BSOD( __LINE__ );
     }
     break;
   case Isambard_System_Service_ReadHeap:
@@ -1058,7 +1057,7 @@ static thread_switch system_driver_request( Core *core, thread_context *thread )
   case Isambard_System_Service_Create_Thread:
     {
       if (0 != (thread->regs[2] & 0xf)) {
-        BSOD( __COUNTER__ ); // FIXME
+        BSOD( __LINE__ ); // FIXME
       }
       thread_context *new_thread = allocate_heap( sizeof( thread_context ) );
       initialise_new_thread( new_thread );
@@ -1075,7 +1074,7 @@ static thread_switch system_driver_request( Core *core, thread_context *thread )
   case Isambard_System_Service_Set_Interrupt_Thread:
     if (core->interrupt_thread != 0) {
       if (core->interrupt_thread != thread) {
-        BSOD( __COUNTER__ );
+        BSOD( __LINE__ );
       }
     }
     else {
@@ -1088,22 +1087,16 @@ static thread_switch system_driver_request( Core *core, thread_context *thread )
     break;
   case Isambard_System_Service_Thread_Make_Partner:
     {
-      if (vm[1].vttbr_el2 != 0) BSOD( __COUNTER__ ); // Only one VM atm
-      if (thread->regs[2] != 4096) BSOD( __COUNTER__ ); // Only one VM atm
+      if (thread->partner != 0) BSOD( __LINE__ ); // Only one partner thread per secure thread
 
-vm[1].hcr_el2 = 0x00000003ull; // 32-bit EL0&1, VM, no nesting
-vm[1].hstr_el2 = 0xffff;       // Hypervisor System Trap Register
-vm[1].vmpidr_el2 = 0xc0000000; // Virtualization Multiprocessor ID Register
-vm[1].vpidr_el2 = 0x410fc075;  // Pi2, according to qemu
-vm[1].sctlr_el1 = 0xd50070;    //  ditto, except clearing SP alignment check bit
-vm[1].vtcr_el2 = 0x800080f22;  // t0sz = 34 (1GB); SL0 = 0, IRGN0, ORGN0 = 0, TG0 = 0 (4k), PS = 0 (4GB), VS=1 (16-bit)
+      thread_context *partner = allocate_heap( sizeof( thread_context ) + sizeof( vm_state ) );
+      memset( partner+1, 0, sizeof( vm_state ) );
 
-      vm[1].vttbr_el2 = (1ull << 48) | thread->regs[1];
-
-      thread_context *partner = allocate_heap( sizeof( thread_context ) );
       thread->partner = partner;
       initialise_new_thread( thread->partner );
       partner->partner = thread;
+      dsb();
+
       asm ( "dc civac, %[va]" : : [va] "r" (&partner->partner) );
       asm ( "dc civac, %[va]" : : [va] "r" (&thread->partner) );
       // This is the secure map, it is the only one that is allowed to switch
@@ -1115,7 +1108,7 @@ vm[1].vtcr_el2 = 0x800080f22;  // t0sz = 34 (1GB); SL0 = 0, IRGN0, ORGN0 = 0, TG
     break;
   default:
     core->system_thread_stack.entry[3] = thread->regs[0];
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
     for (;;) {}
   }
 
@@ -1130,7 +1123,7 @@ vm[1].vtcr_el2 = 0x800080f22;  // t0sz = 34 (1GB); SL0 = 0, IRGN0, ORGN0 = 0, TG
 static inline thread_context *thread_stack_is_full( thread_context *thread )
 {
         thread = thread;
-  BSOD( __COUNTER__ );
+  BSOD( __LINE__ );
   return 0;
 }
 
@@ -1229,24 +1222,24 @@ static inline thread_switch SEL1_LOWER_AARCH64_SYNC_CODE_may_change_map( Core *c
     switch (esr >> 26) { // D7-2254 ARM DDI 0487B.a
     case 0b100000: // Instruction Abort from a lower Exception level.
       {
-        if (!find_and_map_memory( core, thread, fault_address() )) { // BSOD( __COUNTER__ ); }
+        if (!find_and_map_memory( core, thread, fault_address() )) { // BSOD( __LINE__ ); }
 asm ( "mrs x20, elr_el1" );
 asm ( "mrs x21, far_el1" );
 asm ( "mrs x22, esr_el1" );
 asm ( "mov x23, #0x20" );
-        BSOD( __COUNTER__ ); // Instruction
+        BSOD( __LINE__ ); // Instruction
 }
       return result;
       }
     case 0b100100: // Data Abort from a lower Exception level.
       {
-        if (!find_and_map_memory( core, thread, fault_address() )) { // BSOD( __COUNTER__ ); }
+        if (!find_and_map_memory( core, thread, fault_address() )) { // BSOD( __LINE__ ); }
 asm ( "mrs x20, elr_el1" );
 asm ( "mrs x21, far_el1" );
 asm ( "mrs x22, esr_el1" );
 asm ( "mrs x25, ttbr0_el1" );
 asm ( "mov x26, #0x24" );
-        BSOD( __COUNTER__ ); // Data
+        BSOD( __LINE__ ); // Data
 }
 
         return result;
@@ -1254,12 +1247,12 @@ asm ( "mov x26, #0x24" );
     case 0b100110:
       {
         BSOD( 3 ); // SP alignment fault
-        BSOD( __COUNTER__ ); // SP alignment fault
+        BSOD( __LINE__ ); // SP alignment fault
       }
       break;
     case 0b011000:
       {
-        BSOD( __COUNTER__ ); // Register access at EL0, e.g. CNTP_TVAL_EL0
+        BSOD( __LINE__ ); // Register access at EL0, e.g. CNTP_TVAL_EL0
       }
       break;
     case 0b100010:
@@ -1271,7 +1264,7 @@ asm ( "mov x23, %[r]" : : [r] "r" (thread->regs[3]) );
 asm ( "mov x24, %[r]" : : [r] "r" (thread->regs[4]) );
 asm ( "mov x25, %[r]" : : [r] "r" (thread->regs[5]) );
 asm ( "mov x26, %[r]" : : [r] "r" (thread->regs[30]) );
-        BSOD( __COUNTER__ ); // Misaligned PC
+        BSOD( __LINE__ ); // Misaligned PC
       }
       break;
     case 0b111100: // BRK in Aarch64
@@ -1302,12 +1295,12 @@ asm ( "mov x26, %[r]" : : [r] "r" (thread->regs[30]) );
         case 6: BSOD( 11 ); break;
         case 7: BSOD( 12 ); break;
         }
-        BSOD( __COUNTER__ ); // Unknown ESR
+        BSOD( __LINE__ ); // Unknown ESR
       }
     };
   }
   // Blue screen of death time...
-  if (1) BSOD( __COUNTER__ );
+  if (1) BSOD( __LINE__ );
 
   return result;
 }
@@ -1331,7 +1324,7 @@ thread_switch __attribute__(( noinline )) SEL1_LOWER_AARCH64_IRQ_CODE( void *opa
   Core *core = opaque;
 
   result.now = core->interrupt_thread;
-  if (0 == core->interrupt_thread) BSOD( __COUNTER__ );
+  if (0 == core->interrupt_thread) BSOD( __LINE__ );
 
   insert_thread_as_head( &core->runnable, result.now );
   if (result.now->current_map != thread->current_map) {

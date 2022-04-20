@@ -37,7 +37,7 @@ if (thread->partner == 0 && ((thread->spsr & 0x1e) == 8 || 0 != (thread->spsr & 
   if (thread->regs[0] == 0) { // Wait for gate, or timer tick
     if (thread == core->interrupt_thread) {
       if (thread->current_map != system_map_index) {
-        BSOD( __COUNTER__ ); // FIXME: Throw an exception, an interrupt handler tried to wait!
+        BSOD( __LINE__ ); // FIXME: Throw an exception, an interrupt handler tried to wait!
       }
       // Timer tick
       if (core->blocked_with_timeout != 0) {
@@ -121,7 +121,7 @@ if (thread->partner == 0 && ((thread->spsr & 0x1e) == 8 || 0 != (thread->spsr & 
       else {
         invalidate_all_caches();
 	// This could, possibly, be legal. Probably not useful.
-        BSOD( __COUNTER__ ); // Threads not blocked in same map
+        BSOD( __LINE__ ); // Threads not blocked in same map
       }
     }
     else if (release_thread->gate < 0x7fffffff) { // No more than that, which is certainly an error, or an attack
@@ -129,7 +129,7 @@ if (thread->partner == 0 && ((thread->spsr & 0x1e) == 8 || 0 != (thread->spsr & 
     }
   }
   else {
-    BSOD( __COUNTER__ ); // Not real thread
+    BSOD( __LINE__ ); // Not real thread
   }
 
   return result;
@@ -160,11 +160,11 @@ static inline thread_switch handle_svc_duplicate_to_return( Core *core, thread_c
   Interface *interface = interface_from_index( thread->regs[0] );
 
   if (0 == interface) {
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
 
   if (interface->user != thread->current_map) {
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
 
   return new_interface( core, thread, thread->stack_pointer[0].caller_map, interface->provider, interface->handler, interface->object.as_number );
@@ -176,20 +176,20 @@ static inline thread_switch handle_svc_duplicate_to_pass_to( Core *core, thread_
   Interface *interface = interface_from_index( thread->regs[1] );
 
   if (0 == interface) {
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
  
   if (interface->user != thread->current_map) {
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
 
   Interface *target = interface_from_index( thread->regs[0] );
   if (0 == target) {
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
  
   if (target->user != thread->current_map) {
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
 
   return new_interface( core, thread, target->provider, interface->provider, interface->handler, interface->object.as_number );
@@ -203,10 +203,10 @@ static inline thread_switch handle_svc_interface_to_pass_to( Core *core, thread_
   // FIXME lots of testing!
   Interface *interface = interface_from_index( thread->regs[0] );
   if (0 == interface) {
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
   if (interface->user != thread->current_map) {
-    BSOD( __COUNTER__ );
+    BSOD( __LINE__ );
   }
 
   return new_interface( core, thread, interface->provider, thread->current_map, thread->regs[1], thread->regs[2] );
@@ -231,10 +231,10 @@ static inline thread_switch handle_svc_wait_for_lock( Core *core, thread_context
   uint64_t x17 = thread->regs[17];
   uint64_t x18 = thread->regs[18];
   if (!address_is_user_writable( core, thread, x17 )) {
-    BSOD( __COUNTER__ ); // Lock address not user writable (releasing)
+    BSOD( __LINE__ ); // Lock address not user writable (releasing)
   }
   else if (thread_from_code( x18 ) != thread) {
-    BSOD( __COUNTER__ ); // thread code invalid (releasing).
+    BSOD( __LINE__ ); // thread code invalid (releasing).
   }
   else {
     // FIXME: This is only safe with single core (IRQs disabled, so nothing can write to the lock)
@@ -266,7 +266,7 @@ static inline thread_switch handle_svc_wait_for_lock( Core *core, thread_context
           result.now = thread;
 
           if (blocked != thread) {
-            BSOD( __COUNTER__ );
+            BSOD( __LINE__ );
           }
 
           remove_thread( thread );
@@ -288,17 +288,17 @@ static inline thread_switch handle_svc_wait_for_lock( Core *core, thread_context
         uint32_t locking_thread_code = 0xffffffff & lock_value;
 
         if (!is_real_thread( locking_thread_code )) {
-          BSOD( __COUNTER__ ); // Invalid lock value - throw exception, 
+          BSOD( __LINE__ ); // Invalid lock value - throw exception, 
         }
         if (blocked_thread_code != 0
          && !is_real_thread( blocked_thread_code )) {
-          BSOD( __COUNTER__ ); // Invalid lock value - throw exception, blocked not zero, not real thread
+          BSOD( __LINE__ ); // Invalid lock value - throw exception, blocked not zero, not real thread
         }
 
         result.now = thread->next;
         core->runnable = result.now;
         if (result.now == thread) {
-          BSOD( __COUNTER__ ); // This is the only runnable thread on this core, what happened to the idle thread?
+          BSOD( __LINE__ ); // This is the only runnable thread on this core, what happened to the idle thread?
         }
         remove_thread( thread ); // No longer runnable
 
@@ -325,7 +325,7 @@ static inline thread_switch handle_svc_wait_for_lock( Core *core, thread_context
           blocked = first_blocked_thread;
 
           if (first_blocked_thread != 0 && first_blocked_thread->regs[17] != x17) {
-            BSOD( __COUNTER__ ); // Invalid lock value - throw exception, they should all be blocked on the same VA
+            BSOD( __LINE__ ); // Invalid lock value - throw exception, they should all be blocked on the same VA
           }
           // TODO Should the blocking thread be re-scheduled, if runnable?
           // The current thread is doing what I've asked it to, so it should bump up the urgency...
@@ -347,10 +347,10 @@ static inline thread_switch handle_svc_release_lock( Core *core, thread_context 
   uint64_t x17 = thread->regs[17];
   uint64_t x18 = thread->regs[18];
   if (!address_is_user_writable( core, thread, x17 )) {
-    BSOD( __COUNTER__ ); // Lock address not user writable (releasing)
+    BSOD( __LINE__ ); // Lock address not user writable (releasing)
   }
   else if (thread_from_code( x18 ) != thread) {
-    BSOD( __COUNTER__ ); // thread code invalid (releasing).
+    BSOD( __LINE__ ); // thread code invalid (releasing).
   }
   else {
     // FIXME: This is only safe with single core (IRQs disabled, so nothing can write to the lock)
@@ -361,12 +361,12 @@ static inline thread_switch handle_svc_release_lock( Core *core, thread_context 
     uint64_t lock_value = *(uint64_t*) x17; // Protected by kernel spin lock
 
     if (lock_value == 0) {
-      BSOD( __COUNTER__ ); // Throw exception: trying to unlock unlocked lock
+      BSOD( __LINE__ ); // Throw exception: trying to unlock unlocked lock
     }
     uint32_t blocked_thread_code = lock_value >> 32;
     uint32_t locking_thread_code = 0xffffffff & lock_value;
     if (locking_thread_code != x18) {
-      BSOD( __COUNTER__ ); // Throw exception: trying to unlock someone else's lock
+      BSOD( __LINE__ ); // Throw exception: trying to unlock someone else's lock
     }
 
     uint64_t new_value = blocked_thread_code;
@@ -375,7 +375,7 @@ static inline thread_switch handle_svc_release_lock( Core *core, thread_context 
       // It seems unlikely this will not be the case, but it could happen if there's an
       // interrupt between the ldxr and stxr at el0.
       if (!is_real_thread( blocked_thread_code )) {
-        BSOD( __COUNTER__ ); // Invalid lock value - throw exception, blocked not zero, not real thread
+        BSOD( __LINE__ ); // Invalid lock value - throw exception, blocked not zero, not real thread
       }
       thread_context *first_blocked_thread = thread_from_code( blocked_thread_code );
 
@@ -413,39 +413,6 @@ static inline thread_switch handle_svc( Core *core, thread_context *thread, int 
   case 0:
     invalidate_all_caches();
     return result;
-  case 7:
-{ // FIXME FIXME FIXME Remove: testing only! Only works with one VM. Massive security hole!
-    thread_context *t = thread;
-    while (t->next != thread && t->partner == 0) {
-      t = t->next;
-    }
-    if ((t->spsr & 0x10) == 0) t = t->partner;
-    if (t != 0) {
-      thread->regs[0] = t->regs[thread->regs[0]];
-    }
-}
-    return result;
-  case 8:
-{ // FIXME FIXME FIXME Remove: testing only! Only works with one VM. Massive security hole!
-    thread_context *t = thread;
-    while (t->next != thread && t->partner == 0) {
-      t = t->next;
-    }
-    if ((t->spsr & 0x10) == 0) t = t->partner;
-  vm[1].hcr_el2 |= (1 << 7);
-}
-    return result;
-  case 9:
-{ // FIXME FIXME FIXME Remove: testing only! Only works with one VM. Massive security hole!
-    thread_context *t = thread;
-    while (t->next != thread && t->partner == 0) {
-      t = t->next;
-    }
-    if ((t->spsr & 0x10) == 0) t = t->partner;
-  vm[1].hcr_el2 &= ~(1 << 7);
-}
-    return result;
-  case 10: { asm( "mov x4, %[addr]\nsmc 800" : : [addr] "r" (thread->regs[0]) ); } ; break;
   case ISAMBARD_GATE: // gate (wait_until_woken or wake_thread)
     return handle_svc_gate( core, thread );
   case ISAMBARD_DUPLICATE_TO_RETURN:
@@ -512,12 +479,12 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
   {
     // Inter-map call
 
-    if (thread->regs[18] != thread_code( thread )) BSOD( __COUNTER__ ); // FIXME Replace with exception
+    if (thread->regs[18] != thread_code( thread )) BSOD( __LINE__ ); // FIXME Replace with exception
     if (thread->regs[0] != 2 && thread->regs[1] < 0x100) asm ("wfi");
 
     Interface *interface = interface_from_index( thread->regs[0] );
     if (0 == interface) {
-      BSOD( __COUNTER__ );
+      BSOD( __LINE__ );
     }
 
     if (interface->provider == system_map_index
@@ -537,9 +504,9 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
                          "\n\tmrs %[pa], PAR_EL1"
                            : [pa] "=r" (pa)
                            : [va] "r" (thread->regs[2]) );
-            if (0 != (pa & 1)) { BSOD( __COUNTER__ ); } // Physical address of memory not mapped
+            if (0 != (pa & 1)) { BSOD( __LINE__ ); } // Physical address of memory not mapped
           } else {
-            BSOD( __COUNTER__ ); // Physical address of memory not mapped
+            BSOD( __LINE__ ); // Physical address of memory not mapped
           }
         }
         thread->regs[0] = (pa & 0x000ffffffffff000ull) | (thread->regs[2] & 0xfff);
@@ -548,7 +515,7 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
       }
     }
 
-    if (interface->user != thread->current_map) { asm ( "mov x24, %[u]\n\tmov x25, %[i]\n\tmov x26, %[v]\n\tmov x27, %[p]\n\tmov x28, %[l]" : : [u] "r" (interface->user), [i] "r" (thread->regs[0]), [p] "r" (thread->regs[2]), [v] "r" (thread->regs[1]), [l] "r" (thread->regs[30]) ); BSOD( __COUNTER__ ); }
+    if (interface->user != thread->current_map) { asm ( "mov x24, %[u]\n\tmov x25, %[i]\n\tmov x26, %[v]\n\tmov x27, %[p]\n\tmov x28, %[l]" : : [u] "r" (interface->user), [i] "r" (thread->regs[0]), [p] "r" (thread->regs[2]), [v] "r" (thread->regs[1]), [l] "r" (thread->regs[30]) ); BSOD( __LINE__ ); }
 
     thread->regs[0] = interface->object.as_number;
 
@@ -573,8 +540,8 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
   }
   case ISAMBARD_SWITCH_TO_PARTNER:
     {
-      if (thread->partner == 0) BSOD( __COUNTER__ );
-      if (thread->current_map != thread->partner->current_map) BSOD( __COUNTER__ );
+      if (thread->partner == 0) BSOD( __LINE__ );
+      if (thread->current_map != thread->partner->current_map) BSOD( __LINE__ );
 
       // These members are only affected by secure el1.
       thread->partner->next = thread->next;
@@ -587,17 +554,14 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
       core->runnable = result.now;
 
       integer_register spsr = result.now->spsr;
+
+      // TODO: See if this can be done away with, to improve reaction time.
+      invalidate_all_caches();
+
       if (0 != (spsr & 0x10) || ((spsr & 0x1e) == 8)) {
         asm ( "dc ivac, %[r]" : : [r] "r" (&result.now->pc) );
         result.now->pc = thread->regs[1];
-        result.now->spsr |= (1 << 21); // Single-step
-        asm ( "dc civac, %[r]" : : [r] "r" (&result.now->pc) );
-        // Moving to Non-Secure, these registers will be filled in on return to secure mode
-        thread->regs[0] = 0x7777777777777777ull; // Will be pc
-        thread->regs[1] = 0x7777777777777777ull; // Will be syndrome
-        thread->regs[2] = 0x7777777777777777ull; // Will be fault address
-        thread->regs[3] = 0x7777777777777777ull; // Will be intermediate physical address
-        asm ( "dc civac, %[r]" : : [r] "r" (thread->regs) );
+        // result.now->spsr |= (1 << 21); // Single-step
       }
       else {
         // EL2 will have updated the first three registers
@@ -611,9 +575,9 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
       thread_context *partner = thread->partner;
       unsigned int register_index = thread->regs[0];
 
-      if (partner == 0) BSOD( __COUNTER__ );
-      if (thread->current_map != partner->current_map) BSOD( __COUNTER__ );
-      if (register_index > 31) BSOD( __COUNTER__ ); // Register code, takes care of _svc registers, etc.
+      if (partner == 0) BSOD( __LINE__ );
+      if (thread->current_map != partner->current_map) BSOD( __LINE__ );
+      if (register_index > 31) BSOD( __LINE__ ); // Register code, takes care of _svc registers, etc.
 
       integer_register spsr = partner->spsr;
       if (0 != (spsr & 0x10) || ((spsr & 0x1e) == 8)) {
@@ -624,7 +588,7 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
       }
       else {
         // The non-secure code doesn't call this
-        BSOD( __COUNTER__ );
+        BSOD( __LINE__ );
       }
     }
     return result;
@@ -633,9 +597,9 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
       thread_context *partner = thread->partner;
       unsigned int register_index = thread->regs[0];
 
-      if (partner == 0) BSOD( __COUNTER__ );
-      if (thread->current_map != partner->current_map) BSOD( __COUNTER__ );
-      if (register_index > 31) BSOD( __COUNTER__ ); // Register code, takes care of _svc registers, etc.
+      if (partner == 0) BSOD( __LINE__ );
+      if (thread->current_map != partner->current_map) BSOD( __LINE__ );
+      if (register_index > 31) BSOD( __LINE__ ); // Register code, takes care of _svc registers, etc.
 
       integer_register spsr = partner->spsr;
       if (0 != (spsr & 0x10) || ((spsr & 0x1e) == 8)) {
@@ -647,7 +611,7 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
       }
       else {
         // The non-secure code doesn't call this
-        BSOD( __COUNTER__ );
+        BSOD( __LINE__ );
       }
     }
     return result;
@@ -655,36 +619,41 @@ asm ( "mov x26, %[r0]\nmov x27, %[r1]\nmov x28, %[r2]\nmov x29, %[r30]\nsmc 4" :
     {
 #define VM_REGISTER_OUT_OF_RANGE 20
 
-/* This might be called by a thread other than the VM thread.
-      thread_context *partner = thread->partner;
-      if (partner == 0) BSOD( __COUNTER__ );
-      if (thread->current_map != partner->current_map) BSOD( __COUNTER__ );
-*/
-      unsigned int register_index = thread->regs[0];
-      if (register_index >= VM_REGISTER_OUT_OF_RANGE) BSOD( __COUNTER__ );
+      if (!is_real_thread( thread->regs[0] )) BSOD( __LINE__ );
 
-      uint64_t *sysregs = (void*) &vm[1]; // FIXME more than one vm!
+      thread_context *vm_thread = thread_from_code( thread->regs[0] );
+      if (vm_thread->partner == 0) BSOD( __LINE__ );
+
+      thread_context *partner = vm_thread->partner;
+
+      if (partner == 0) BSOD( __LINE__ );
+
+      uint64_t *sysregs = (void*) (partner + 1);
+
+      // Only allow access from code in the same VM map
+      if (thread->current_map != partner->current_map) BSOD( __LINE__ );
+
+      unsigned int register_index = thread->regs[1];
+      if (register_index >= VM_REGISTER_OUT_OF_RANGE) BSOD( __LINE__ );
 
       asm ( "dc civac, %[r]" : : [r] "r" (&sysregs[register_index]) );
-      uint32_t old_value = 0;
-      uint32_t new_value = thread->regs[1];
-      if (thread->regs[2] != 0) {
-        // Read only if not ignoring all bits
-        old_value = sysregs[register_index];
-        new_value = new_value ^ (old_value & thread->regs[2]);
+      uint32_t old_value = sysregs[register_index];
+      uint32_t new_value = thread->regs[2];
+      if (thread->regs[3] != 0) {
+        new_value = new_value ^ (old_value & thread->regs[3]);
       }
-      if (thread->regs[1] != 0 || thread->regs[2] != 0xffffffff) {
+      if (thread->regs[2] != 0 || thread->regs[3] != ~0ull) {
         // Write only if something might have changed
         sysregs[register_index] = new_value;
       }
       asm ( "dsb sy\ndc cvac, %[r]" : : [r] "r" (&sysregs[register_index]) );
 
-      thread->regs[0] = sysregs[register_index];
+      thread->regs[0] = old_value;
     }
     return result;
   case ISAMBARD_SYSTEM_REQUEST:
     return system_driver_request( core, thread );
-  default: BSOD( __COUNTER__ );
+  default: BSOD( __LINE__ );
   }
 
   return result;

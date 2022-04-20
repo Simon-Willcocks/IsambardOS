@@ -102,18 +102,18 @@ void __attribute__(( noinline, noreturn )) pre_mmu_core_with_stack( core_workspa
   asm ( "msr sp_irq, %[stack]" : : [stack] "r" (&ws->kernel.svc_stack) );
   asm ( "cpsie i" ); // Enable interrupts
 
-  uint32_t volatile *counter = &ws->counter;
+  // Known to riscos driver
+  uint32_t volatile *counter = (void*) 0x400000;
 
   for (;;) {
-    // Spend maybe half the time in the "guest OS"
-    register uint32_t loops asm( "r7" ) = *counter;
+    // Spend maybe half the time in the "guest OS" (this code)
     do {
       ++*counter;
-      loops = *counter;
-    } while (0 != (*counter & 0xffffff));
+    } while (0 != (*counter & 0xfffff));
     // Switch to the hypervisor for the other half
+    register uint32_t count asm( "r7" ) = *counter;
     register uint32_t interrupts asm( "r8" ) = workspace->irq_counter;
-    asm ( "hvc 15" : : "r" (loops), "r" (interrupts) );
+    asm ( "hvc 15" : : "r" (count), "r" (interrupts) );
   }
 
   __builtin_unreachable();
